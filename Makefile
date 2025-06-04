@@ -1,5 +1,3 @@
-board=tangnano9k
-
 all:
 	yosys -p "read_verilog cpu/*.v; synth_gowin -json nikorv.json";
 	nextpnr-himbaechel --json nikorv.json \
@@ -8,3 +6,6 @@ all:
                    --vopt family=GW1N-9C \
                    --vopt cst=nikorv.cst
 	gowin_pack -d GW1N-9C -o pack.fs pnrnikorv.json
+
+clean:
+	rm *.json
