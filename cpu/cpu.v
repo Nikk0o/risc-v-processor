@@ -143,7 +143,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 
 	always @(negedge clk) begin
 		EXMEM_IMM <= IDEX_IMM;
-		EXMEM_PCIMM <= IDEX_PC + IDEX_IMM;
+		EXMEM_PCIMM <= IDEX_PC + (IDEX_IMM << 1);
 		EXMEM_PC <= IDEX_PC;
 		EXMEM_MSB <= alu_res[31];
 		EXMEM_ZERO <= zero;
@@ -206,6 +206,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 
 endmodule
 
+// Sign extends the immediate value
 module imm_Gen(input[31:0] instruction,
 			   output reg signed[31:0] imm_out);
 
@@ -217,14 +218,13 @@ module imm_Gen(input[31:0] instruction,
 		if (opcode == 'b0010011 || opcode == 'b0000011 || opcode == 'b1100111) begin
 			// I type
 			imm_out[11:0] <= instruction[31:20];
-			imm_out[10:0] <= 0;
-			imm_out[31:12] <= 0;
+			imm_out[31:12] <= {20{instruction[31]}};
 		end
 		else if (opcode == 'b0100011) begin
 			// S type
 			imm_out[11:5] <= instruction[31:25];
 			imm_out[4:0] <= instruction[11:7];
-			imm_out[31:12] <= 0;
+			imm_out[31:12] <= {20{instruction[31]}};
 		end
 		else if (opcode == 'b1100011) begin
 			// B type
@@ -232,7 +232,7 @@ module imm_Gen(input[31:0] instruction,
 			imm_out[10:5] <= instruction[30:25];
 			imm_out[4:1] <= instruction[11:8];
 			imm_out[11] <= instruction[7];
-			imm_out[31:13] <= 0;
+			imm_out[31:13] <= {19{instruction[31]}};
 			imm_out[0] <= 0;
 		end
 		else if (opcode == 'b0110111 || opcode == 'b0010111 /* auipc */) begin
@@ -246,7 +246,7 @@ module imm_Gen(input[31:0] instruction,
 			imm_out[10:1] <= instruction[30:21];
 			imm_out[11] <= instruction[20];
 			imm_out[19:12] <= instruction[19:12];
-			imm_out[31:21] <= 0;
+			imm_out[31:21] <= {11{instruction[31]}};
 			imm_out[0] <= 0;
 		end
 		else
