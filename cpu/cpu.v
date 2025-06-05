@@ -47,7 +47,9 @@ module cpu(input clk,
 	reg IDEX_SetLessThan = 0;
 	reg IDEX_Jump = 0;
 	reg IDEX_NotEqual = 0;
-	reg IDEX_StoreSize = 0;
+	reg[1:0] IDEX_StoreSize = 0;
+	reg[1:0] IDEX_LoadSize = 0;
+	reg IDEX_LoadUns = 0;
 
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -69,7 +71,9 @@ module cpu(input clk,
 	reg EXMEM_SetLessThan = 0;
 	reg EXMEM_Jump = 0;
 	reg EXMEM_NotEqual = 0;
-	reg EXMEM_StoreSize = 0;
+	reg[1:0] EXMEM_StoreSize = 0;
+	reg[1:0] EXMEM_LoadSize = 0;
+	reg EXMEM_LoadUns = 0;
 
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -111,7 +115,9 @@ module cpu(input clk,
 	wire SetLessThan;
 	wire Jump;
 	wire NotEqual;
-	wire StoreSize;
+	wire[1:0] StoreSize;
+	wire[1:0] LoadSize;
+	wire LoadUns;
 
 	wire signed[31:0] a, b;
 	wire signed[31:0] imm;
@@ -144,7 +150,9 @@ module cpu(input clk,
 					.SetLessThan(SetLessThan),
 					.Jump(Jump),
 					.NotEqual(NotEqual),
-					.StoreSize(StoreSize));
+					.StoreSize(StoreSize),
+					.LoadSize(LoadSize),
+					.LoadUns(LoadUns));
 
 	always @(negedge clk) begin
 		IDEX_A <= a;
@@ -167,6 +175,8 @@ module cpu(input clk,
 		IDEX_Jump <= Jump;
 		IDEX_NotEqual <= NotEqual;
 		IDEX_StoreSize <= StoreSize;
+		IDEX_LoadSize <= LoadSize;
+		IDEX_LoadUns <= LoadUns;
 	end
 
 	// Execution stage
@@ -200,6 +210,8 @@ module cpu(input clk,
 		EXMEM_Jump <= IDEX_Jump;
 		EXMEM_NotEqual <= IDEX_NotEqual;
 		EXMEM_StoreSize <= IDEX_StoreSize;
+		EXMEM_LoadSize <= IDEX_LoadSize;
+		EXMEM_LoadUns <= IDEX_LoadUns;
 	end
 
 	// Memory stage
@@ -208,7 +220,28 @@ module cpu(input clk,
 	assign new_PC = (EXMEM_Jump || EXMEM_Branch && ((EXMEM_NotEqual) ? ~EXMEM_ZERO : (EXMEM_Equal) ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && EXMEM_MSB))) ? PC_ : PC + 32'd4;
 
 	always @(*)
-		MEMWB_LOAD <= d_mem_out;
+		if (EXMEM_LoadSize == 0)
+			MEMWB_LOAD <= 0;
+		else if (EXMEM_LoadSize == 1)
+			if (EXMEM_LoadUns) begin
+				MEMWB_LOAD[7:0] <= d_mem_out[31:25];
+				MEMWB_LOAD[31:8] <= 0;
+			end
+			else begin
+				MEMWB_LOAD[7:0] <= d_mem_out[31:25];
+				MEMWB_LOAD[31:8] <= {24{d_mem_out[31]}};
+			end
+		else if (EXMEM_LoadSize == 2)
+			if (EXMEM_LoadUns) begin
+				MEMWB_LOAD[15:0] <= d_mem_out[31:16];
+				MEMWB_LOAD[31:16] <= 0;
+			end
+			else begin
+				MEMWB_LOAD[15:0] <= d_mem_out[31:16];
+				MEMWB_LOAD[31:16] <= {16{d_mem_out[31]}};
+			end
+		else
+			MEMWB_LOAD <= d_mem_out;
 
 	always @(negedge clk) begin
 		MEMWB_ALURES <= EXMEM_ALURES;
@@ -229,7 +262,6 @@ module cpu(input clk,
 	assign write_data_size = EXMEM_StoreSize;
 	
 	// Write back stage
-
 	assign write_data = (MEMWB_WriteUImm) ?
 							MEMWB_IMM :
 							(MEMWB_PCtoReg) ?
@@ -307,7 +339,9 @@ module uc(input[31:0] i,
 		  output reg PCImm,
 	      output reg Jump,
 		  output reg NotEqual,
-		  output reg[1:0] StoreSize);
+		  output reg[1:0] StoreSize,
+	      output reg[1:0] LoadSize,
+		  output reg LoadUns);
 
 	wire[6:0] opcode = i[6:0];
 	wire[2:0] funct3 = i[14:12];
@@ -329,6 +363,8 @@ module uc(input[31:0] i,
 			AluSrc <= 0;
 			NotEqual <= 0;
 			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 			if (funct3 == 0 && funct7 == 0)
 				AluOp <= `ADD;
 			else if (funct3 == 0 && funct7 == 'h20)
@@ -348,7 +384,11 @@ module uc(input[31:0] i,
 			else if (funct3 == 'h2 && funct7 == 'h0)
 				AluOp <= `SUB;
 			else if (funct3 == 'h3 && funct7 == 0)
-				AluOp <= `SUB;
+				AluOp <= `SUBU;
+			else if (funct3 == 'b101 && funct7 == 'h0)
+				AluOp <= `DIVU;
+			else if (funct3 == 'h7 && funct7 <= 0)
+				AluOp <= `REMU;
 			else
 				AluOp <= `NONE;
 
@@ -376,6 +416,20 @@ module uc(input[31:0] i,
 				AluOp <= `NONE;
 				PCImm <= 0;
 				WriteReg <= 1;
+
+				if (funct3 == 0)
+					LoadSize <= 1;
+				else if (funct3 == 1)
+					LoadSize <= 2;
+				else if (funct3 == 2)
+					LoadSize <= 3;
+				else
+					LoadSize <= 0;
+
+				if (funct3 == 4 || funct3 == 5)
+					LoadUns <= 1;
+				else
+					LoadUns <= 0;
 			end
 			else if (opcode == 'b1100111) begin
 				// jalr
@@ -386,6 +440,9 @@ module uc(input[31:0] i,
 				AluOp <= `NONE;
 				PCImm <= 1;
 				WriteReg <= 1;
+				LoadSize <= 0;
+				LoadUns <= 0;
+				StoreSize <= 0;
 			end
 			else begin
 				Jump <= 0;
@@ -393,6 +450,9 @@ module uc(input[31:0] i,
 				PCtoReg <= 0;
 				PCImm <= 0;
 				WriteReg <= 1;
+				LoadSize <= 0;
+				StoreSize <= 0;
+				LoadUns <= 0;
 
 				// Arithmetic operations
 				if (funct3 == 'h0)
@@ -412,7 +472,7 @@ module uc(input[31:0] i,
 				else if (funct3 == 'h2)
 					AluOp <= `SUB;
 				else if (funct3 == 'h3)
-					AluOp <= `SUB;
+					AluOp <= `SUBU;
 				else
 					AluOp <= `NONE;
 
@@ -438,6 +498,8 @@ module uc(input[31:0] i,
 			NotEqual <= 0;
 			LessThan <= 0;
 			Equal <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 
 			if (funct3 == 'h0)
 				StoreSize <= 1;
@@ -462,6 +524,8 @@ module uc(input[31:0] i,
 			WriteUImm <= 0;
 			PCImm <= 1;
 			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 			if (funct3 == 0) begin
 				// eq
 				Equal <= 1;
@@ -509,6 +573,8 @@ module uc(input[31:0] i,
 			WriteUImm <= 0;
 			MemToReg <= 0;
 			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 		end
 		else if (opcode == 'b1101111) begin
 			// J type
@@ -527,6 +593,8 @@ module uc(input[31:0] i,
 			WriteUImm <= 0;
 			MemToReg <= 0;
 			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 		end
 		else begin
 			Branch <= 0;
@@ -544,6 +612,8 @@ module uc(input[31:0] i,
 			WriteUImm <= 0;
 			MemToReg <= 0;
 			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
 		end
 
 endmodule

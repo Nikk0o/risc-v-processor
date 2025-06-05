@@ -14,5 +14,8 @@
 `define LRSHIFT 10
 `define MUL 11
 `define DIV 12
+`define SUBU 13
+`define DIVU 14
+`define REMU 15
 
 `endif

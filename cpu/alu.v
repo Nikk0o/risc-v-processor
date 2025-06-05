@@ -9,8 +9,13 @@ module alu(
 	output zero);
 
 	reg signed[31:0] res_ = 0;
+	reg[31:0] r1u;
+	reg[331:0] r2u;
 
-	always @(posedge clk)
+	always @(posedge clk) begin
+		r1u = r1;
+		r2u = r2;
+
 		case (alu_op)
 			`ADD:
 				res_ <= r1 + r2;
@@ -36,9 +41,16 @@ module alu(
 				res_ <= r1 * r2;
 			`DIV:
 				res_ <= r1 / r2;
+			`SUBU:
+				res_ <= r1u - r2u;
+			`DIVU:
+				res_ <= r1u / r2u;
+			`REMU:
+				res_ <= r1u % r2u;
 			default:
 				res_ <= 0;
 		endcase
+	end
 
 	assign zero = res_ == 0;
 	assign res = res_;
