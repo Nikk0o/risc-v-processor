@@ -9,13 +9,14 @@ module registers(input clk,
 
 	reg signed[31:0] regs[31:0];
 
-	always @(negedge clk)
+	// these must update on the rising edge to make data
+	// avalible on the clock cycle
+	always @(posedge clk) begin
+		r1 = regs[rs1];
+		r2 = regs[rs2];
+
 		if (write_enable && rd != 0)
 			regs[rd] <= write_data;
-
-	always @(posedge clk) begin
-		r1 <= regs[rs1];
-		r2 <= regs[rs2];
 	end
 
 	integer i;

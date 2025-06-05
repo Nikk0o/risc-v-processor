@@ -8,7 +8,7 @@
 `define XOR 4
 `define XNOR 5
 `define OR 6
-`define NOT 7
+`define REM 7
 `define LSHIFT 8
 `define ARSHIFT 9
 `define LRSHIFT 10

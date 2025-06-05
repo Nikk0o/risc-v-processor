@@ -6,16 +6,14 @@ module alu(
 	input signed[31:0] r1,
 	input signed[31:0] r2,
 	output signed[31:0] res,
-	output zero);
+	output zero,
+	output reg illegal_op);
 
 	reg signed[31:0] res_ = 0;
-	reg[31:0] r1u;
-	reg[31:0] r2u;
+	wire[31:0] r1u = r1;
+	wire[31:0] r2u = r2;
 
-	always @(posedge clk) begin
-		r1u = r1;
-		r2u = r2;
-
+	always @(*)
 		case (alu_op)
 			`ADD:
 				res_ <= r1 + r2;
@@ -29,8 +27,8 @@ module alu(
 				res_ <= r1 ^ r2;
 			`XNOR:
 				res_ <= r1 ^~ r2;
-			`NOT:
-				res_ <= ~r1;
+			`REM:
+				res_ <= r1 % r2;
 			`LSHIFT:
 				res_ <= r1 << r2;
 			`LRSHIFT:
@@ -50,7 +48,12 @@ module alu(
 			default:
 				res_ <= 0;
 		endcase
-	end
+
+	always @(*)
+		if ((alu_op == `DIV || alu_op == `DIVU || alu_op == `REM || alu_op == `REMU) && r2 == 0)
+			illegal_op <= 1;
+		else
+			illegal_op <= 0;
 
 	assign zero = res_ == 0;
 	assign res = res_;
