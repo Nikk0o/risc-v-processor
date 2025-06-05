@@ -10,7 +10,7 @@ module alu(
 
 	reg signed[31:0] res_ = 0;
 	reg[31:0] r1u;
-	reg[331:0] r2u;
+	reg[31:0] r2u;
 
 	always @(posedge clk) begin
 		r1u = r1;

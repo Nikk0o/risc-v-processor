@@ -248,6 +248,7 @@ module cpu(input clk,
 		MEMWB_PC <= EXMEM_PC;
 		MEMWB_IMM <= EXMEM_IMM;
 		MEMWB_MSB <= EXMEM_MSB;
+		MEMWB_RD <= EXMEM_RD;
 		MEMWB_WriteReg <= EXMEM_WriteReg;
 		MEMWB_WriteMem <= EXMEM_WriteMem;
 		MEMWB_MemToReg <= EXMEM_MemToReg;
