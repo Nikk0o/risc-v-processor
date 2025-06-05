@@ -10,8 +10,7 @@ module alu(
 	output reg illegal_op);
 
 	reg signed[31:0] res_ = 0;
-	wire[31:0] r1u = r1;
-	wire[31:0] r2u = r2;
+	reg signed[31:0] res__ = 0;
 
 	always @(*)
 		case (alu_op)
@@ -25,8 +24,6 @@ module alu(
 				res_ <= r1 | r2;
 			`XOR:
 				res_ <= r1 ^ r2;
-			`XNOR:
-				res_ <= r1 ^~ r2;
 			`REM:
 				res_ <= r1 % r2;
 			`LSHIFT:
@@ -34,23 +31,26 @@ module alu(
 			`LRSHIFT:
 				res_ <= r1 >> r2;
 			`ARSHIFT:
-				res_ <= r1 >>> r2;
+				res_ <= r2 >= 0 ? r1 >>> r2 : r1 >> r2;
 			`MUL:
 				res_ <= r1 * r2;
 			`DIV:
 				res_ <= r1 / r2;
 			`SUBU:
-				res_ <= r1u - r2u;
+				res_ <= (r1 >= 0 ? r1 : -r1) - (r2 >= 0 ? r2 : -r2);
 			`DIVU:
-				res_ <= r1u / r2u;
+				res_ <= (r1 >= 0 ? r1 : -r1) / (r2 >= 0 ? r2 : -r2);
 			`REMU:
-				res_ <= r1u % r2u;
+				res_ <= (r1 >= 0 ? r1 : -r1) % (r2 >= 0 ? r2 : -r2);
 			default:
-				res_ <= 0;
+				res_ <= res__;
 		endcase
 
+	always @(posedge clk)
+		res__ <= res_;
+
 	always @(*)
-		if ((alu_op == `DIV || alu_op == `DIVU || alu_op == `REM || alu_op == `REMU) && r2 == 0)
+		if ((alu_op == `DIV || alu_op == `DIVU || alu_op == `REM || alu_op == `REMU) && ~(|r2))
 			illegal_op <= 1;
 		else
 			illegal_op <= 0;

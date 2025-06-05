@@ -19,7 +19,10 @@ module cpu(input clk,
 	reg first_inst = 1;
 
 	always @(posedge clk)
-		first_inst <= 0;
+		if (reset)
+			first_inst <= 1;
+		else
+			first_inst <= 0;
 
 	always @(negedge clk) begin
 		if (reset) begin
@@ -39,6 +42,7 @@ module cpu(input clk,
 
 	reg[31:0] IFID_PC = 0;
 	reg[31:0] IFID_IR = 0;
+	reg IFID_reset = 0;
 
 	reg signed[31:0] IDEX_A = 0;
 	reg signed[31:0] IDEX_B = 0;
@@ -64,6 +68,7 @@ module cpu(input clk,
 	reg IDEX_LoadUns = 0;
 	reg IDEX_WritePCImm = 0;
 	reg IDEX_IsLoad = 0;
+	reg IDEX_reset = 0;
 
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -89,6 +94,7 @@ module cpu(input clk,
 	reg[1:0] EXMEM_LoadSize = 0;
 	reg EXMEM_LoadUns = 0;
 	reg EXMEM_WritePCImm = 0;
+	reg EXMEM_reset = 0;
 
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -104,6 +110,7 @@ module cpu(input clk,
 	reg MEMWB_WriteUImm = 0;
 	reg MEMWB_SetLessThan = 0;
 	reg MEMWB_WritePCImm = 0;
+	reg MEMWB_reset = 0;
 
 	wire fw_EX_A;
 	wire fw_EX_B;
@@ -113,6 +120,7 @@ module cpu(input clk,
 
 	always @(negedge clk) begin
 		if (!stop_ID) begin
+			IFID_reset <= reset;
 			IFID_PC <= PC;
 			IFID_IR <= i_mem_out;
 		end
@@ -150,6 +158,7 @@ module cpu(input clk,
 	wire WritePCImm;
 	wire IsLoad;
 
+	wire signed[31:0] alu_res;
 	wire signed[31:0] a_, b_;
 	wire signed[31:0] a = fw_EX_A ? alu_res : fw_MEM_A ? d_mem_out : a_;
 	wire signed[31:0] b = fw_EX_B ? alu_res : fw_MEM_B ? d_mem_out : b_;
@@ -163,6 +172,7 @@ module cpu(input clk,
 				   .funct7(funct7),
 				   .imm_out(imm));
 
+	wire wr = MEMWB_WriteReg && ~MEMWB_reset;
 	registers regs(.clk(clk),
 				   .rs1(rs1),
 				   .rs2(rs2),
@@ -170,7 +180,7 @@ module cpu(input clk,
 				   .r2(b_),
 				   .rd(MEMWB_RD),
 				   .write_data(write_data),
-				   .write_enable(MEMWB_WriteReg));
+				   .write_enable(wr));
 
 	uc control_unit(.clk(clk),
 					.opcode(opcode),
@@ -197,31 +207,9 @@ module cpu(input clk,
 					.IsLoad(IsLoad));
 
 	always @(negedge clk) begin
-		if (reset) begin
-			IDEX_A <= 0;
-			IDEX_B <= 0;
-			IDEX_RD <= 0;
-			IDEX_IMM <= 0;
-			IDEX_PC <= 0;
-			IDEX_AluSrc <= 0;
-			IDEX_LessThan <= 0;
-			IDEX_Equal <= 0;
-			IDEX_AluOp <= 0;
-			IDEX_WriteReg <= 0;
-			IDEX_WriteMem <= 0;
-			IDEX_MemToReg <= 0;
-			IDEX_PCtoReg <= 0;
-			IDEX_WriteUImm <= 0;
-			IDEX_PCImm <= 0;
-			IDEX_SetLessThan <= 0;
-			IDEX_Branch <= 0;
-			IDEX_Jump <= 0;
-			IDEX_NotEqual <= 0;
-			IDEX_StoreSize <= 0;
-			IDEX_LoadSize <= 0;
-			IDEX_LoadUns <= 0;
-			IDEX_WritePCImm <= 0;
-			IDEX_IsLoad <= 0;
+		IDEX_reset <= IFID_reset;
+
+		if (IFID_reset) begin
 		end
 		else if (!stop_ID) begin
 			IDEX_A <= a;
@@ -252,40 +240,15 @@ module cpu(input clk,
 	end
 
 	// Execution stage
-
-	wire signed[31:0] alu_res;
 	wire signed[31:0] alu_b = IDEX_AluSrc ? IDEX_IMM : IDEX_B;
 	wire zero;
 
 	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(IDEX_A), .r2(alu_b), .res(alu_res), .zero(zero));
 
 	always @(negedge clk) begin
-		if (reset) begin
-			EXMEM_IMM <= 0;
-			EXMEM_PCIMM <= 0;
-			EXMEM_PC <= 0;
-			EXMEM_MSB <= 0;
-			EXMEM_ZERO <= 0;
-			EXMEM_ALURES <= 0;
-			EXMEM_IMM <= 0;
-			EXMEM_B <= 0;
-			EXMEM_RD <= 0;
-			EXMEM_LessThan <= 0;
-			EXMEM_Equal <= 0;
-			EXMEM_WriteReg <= 0;
-			EXMEM_WriteMem <= 0;
-			EXMEM_MemToReg <= 0;
-			EXMEM_PCtoReg <= 0;
-			EXMEM_WriteUImm <= 0;
-			EXMEM_PCImm <= 0;
-			EXMEM_SetLessThan <= 0;
-			EXMEM_Branch <= 0;
-			EXMEM_Jump <= 0;
-			EXMEM_NotEqual <= 0;
-			EXMEM_StoreSize <= 0;
-			EXMEM_LoadSize <= 0;
-			EXMEM_LoadUns <= 0;
-			EXMEM_WritePCImm <= 0;
+		EXMEM_reset <= IDEX_reset;
+
+		if (IDEX_reset) begin
 		end
 		else begin
 			EXMEM_IMM <= IDEX_IMM;
@@ -319,12 +282,10 @@ module cpu(input clk,
 	// Memory stage
 
 	wire[31:0] PC_ = EXMEM_PCImm ? EXMEM_PCIMM : EXMEM_ALURES;
-	assign new_PC = (EXMEM_Jump || EXMEM_Branch && ((EXMEM_NotEqual) ? ~EXMEM_ZERO : (EXMEM_Equal) ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && EXMEM_MSB))) ? PC_ : PC + 32'd4;
+	assign new_PC = (EXMEM_Jump || EXMEM_Branch && ((EXMEM_NotEqual) ? ~EXMEM_ZERO : (EXMEM_Equal) ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB))) ? PC_ : PC + 32'd4;
 
 	always @(negedge clk)
-		if (reset)
-			MEMWB_LOAD <= 0;
-		else if (EXMEM_LoadSize == 0)
+		if (EXMEM_reset || ~(|EXMEM_LoadSize))
 			MEMWB_LOAD <= 0;
 		else if (EXMEM_LoadSize == 1)
 			if (EXMEM_LoadUns) begin
@@ -348,20 +309,9 @@ module cpu(input clk,
 			MEMWB_LOAD <= d_mem_out;
 
 	always @(negedge clk) begin
-		if (reset) begin
-			MEMWB_ALURES <= 0;
-			MEMWB_PC <= 0;
-			MEMWB_IMM <= 0;
-			MEMWB_MSB <= 0;
-			MEMWB_RD <= 0;
-			MEMWB_WriteReg <= 0;
-			MEMWB_WriteMem <= 0;
-			MEMWB_MemToReg <= 0;
-			MEMWB_PCtoReg <= 0;
-			MEMWB_WriteUImm <= 0;
-			MEMWB_SetLessThan <= 0;
-			MEMWB_PCIMM <= 0;
-			MEMWB_WritePCImm <= 0;
+		MEMWB_reset <= EXMEM_reset;
+
+		if (EXMEM_reset) begin
 		end
 		else begin
 			MEMWB_ALURES <= EXMEM_ALURES;
@@ -381,7 +331,7 @@ module cpu(input clk,
 	end
 
 	assign d_mem_in = EXMEM_B;
-	assign d_mem_wen = EXMEM_WriteMem;
+	assign d_mem_wen = EXMEM_WriteMem && ~EXMEM_reset;
 	assign d_addr = EXMEM_ALURES;
 	assign write_data_size = EXMEM_StoreSize;
 	
@@ -459,6 +409,8 @@ module imm_Gen(input clk,
 			imm_out[31:21] <= {11{instruction[31]}};
 			imm_out[0] <= 0;
 		end
+		else
+			imm_out <= 0;
 
 endmodule
 

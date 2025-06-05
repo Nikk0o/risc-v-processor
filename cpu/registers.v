@@ -8,6 +8,7 @@ module registers(input clk,
 				 output reg signed[31:0] r2);
 
 	reg signed[31:0] regs[31:0];
+	wire wen = write_enable && |rd;
 
 	// these must update on the rising edge to make data
 	// avalible on the clock cycle
@@ -15,7 +16,7 @@ module registers(input clk,
 		r1 = regs[rs1];
 		r2 = regs[rs2];
 
-		if (write_enable && rd != 0)
+		if (wen)
 			regs[rd] <= write_data;
 	end
 
