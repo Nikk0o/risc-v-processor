@@ -1,6 +1,13 @@
 `include "aluops.vh"
 
-module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input signed[31:0] d_mem_out, output d_mem_wen, output[31:0] addr, output[31:0] d_addr);
+module cpu(input clk,
+		   input[31:0] i_mem_out,
+		   output signed[31:0] d_mem_in,
+		   output[1:0] write_data_size,
+		   input signed[31:0] d_mem_out,
+		   output d_mem_wen,
+		   output[31:0] addr,
+		   output[31:0] d_addr);
 
 	// Fetch stage
 	reg[31:0] PC = 0;
@@ -40,6 +47,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 	reg IDEX_SetLessThan = 0;
 	reg IDEX_Jump = 0;
 	reg IDEX_NotEqual = 0;
+	reg IDEX_StoreSize = 0;
 
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -61,6 +69,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 	reg EXMEM_SetLessThan = 0;
 	reg EXMEM_Jump = 0;
 	reg EXMEM_NotEqual = 0;
+	reg EXMEM_StoreSize = 0;
 
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -102,14 +111,40 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 	wire SetLessThan;
 	wire Jump;
 	wire NotEqual;
+	wire StoreSize;
 
 	wire signed[31:0] a, b;
 	wire signed[31:0] imm;
 	wire signed[31:0] write_data;
 
-	imm_Gen immgen(.instruction(IFID_IR), .imm_out(imm));
-	registers regs(.clk(clk), .rs1(rs1), .rs2(rs2), .r1(a), .r2(b), .rd(MEMWB_RD), .write_data(write_data), .write_enable(MEMWB_WriteReg));
-	uc control_unit(.i(IFID_IR), .Branch(Branch), .AluSrc(AluSrc), .AluOp(AluOp), .LessThan(LessThan), .Equal(Equal), .WriteReg(WriteReg), .WriteMem(WriteMem), .MemToReg(MemToReg), .PCtoReg(PCtoReg), .PCImm(PCImm), .WriteUImm(WriteUImm), .SetLessThan(SetLessThan), .Jump(Jump), .NotEqual(NotEqual));
+	imm_Gen immgen(.instruction(IFID_IR),
+				   .imm_out(imm));
+
+	registers regs(.clk(clk),
+				   .rs1(rs1),
+				   .rs2(rs2),
+				   .r1(a),
+				   .r2(b),
+				   .rd(MEMWB_RD),
+				   .write_data(write_data),
+				   .write_enable(MEMWB_WriteReg));
+
+	uc control_unit(.i(IFID_IR),
+					.Branch(Branch),
+					.AluSrc(AluSrc),
+					.AluOp(AluOp),
+					.LessThan(LessThan),
+					.Equal(Equal),
+					.WriteReg(WriteReg),
+					.WriteMem(WriteMem),
+					.MemToReg(MemToReg),
+					.PCtoReg(PCtoReg),
+					.PCImm(PCImm),
+					.WriteUImm(WriteUImm),
+					.SetLessThan(SetLessThan),
+					.Jump(Jump),
+					.NotEqual(NotEqual),
+					.StoreSize(StoreSize));
 
 	always @(negedge clk) begin
 		IDEX_A <= a;
@@ -131,6 +166,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 		IDEX_Branch <= Branch;
 		IDEX_Jump <= Jump;
 		IDEX_NotEqual <= NotEqual;
+		IDEX_StoreSize <= StoreSize;
 	end
 
 	// Execution stage
@@ -163,6 +199,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 		EXMEM_Branch <= IDEX_Branch;
 		EXMEM_Jump <= IDEX_Jump;
 		EXMEM_NotEqual <= IDEX_NotEqual;
+		EXMEM_StoreSize <= IDEX_StoreSize;
 	end
 
 	// Memory stage
@@ -189,6 +226,7 @@ module cpu(input clk, input[31:0] i_mem_out, output signed[31:0] d_mem_in, input
 	assign d_mem_in = EXMEM_B;
 	assign d_mem_wen = EXMEM_WriteMem;
 	assign d_addr = EXMEM_ALURES;
+	assign write_data_size = EXMEM_StoreSize;
 	
 	// Write back stage
 
@@ -268,7 +306,8 @@ module uc(input[31:0] i,
 		  output reg WriteUImm,
 		  output reg PCImm,
 	      output reg Jump,
-		  output reg NotEqual);
+		  output reg NotEqual,
+		  output reg[1:0] StoreSize);
 
 	wire[6:0] opcode = i[6:0];
 	wire[2:0] funct3 = i[14:12];
@@ -289,6 +328,7 @@ module uc(input[31:0] i,
 			WriteReg <= 1;
 			AluSrc <= 0;
 			NotEqual <= 0;
+			StoreSize <= 0;
 			if (funct3 == 0 && funct7 == 0)
 				AluOp <= `ADD;
 			else if (funct3 == 0 && funct7 == 'h20)
@@ -326,6 +366,7 @@ module uc(input[31:0] i,
 			LessThan <= 0;
 			NotEqual <= 0;
 			Equal <= 0;
+			StoreSize <= 0;
 			if (opcode == 'b0000011) begin
 				// load
 				MemToReg <= 1;
@@ -397,6 +438,15 @@ module uc(input[31:0] i,
 			NotEqual <= 0;
 			LessThan <= 0;
 			Equal <= 0;
+
+			if (funct3 == 'h0)
+				StoreSize <= 1;
+			else if (funct3 == 'h1)
+				StoreSize <= 2;
+			else if (funct3 == 'h2)
+				StoreSize <= 3;
+			else
+				StoreSize <= 0;
 		end
 		else if (opcode == 'b1100011) begin
 			// B type
@@ -411,6 +461,7 @@ module uc(input[31:0] i,
 			SetLessThan <= 0;
 			WriteUImm <= 0;
 			PCImm <= 1;
+			StoreSize <= 0;
 			if (funct3 == 0) begin
 				// eq
 				Equal <= 1;
@@ -457,6 +508,7 @@ module uc(input[31:0] i,
 			WriteMem <= 0;
 			WriteUImm <= 0;
 			MemToReg <= 0;
+			StoreSize <= 0;
 		end
 		else if (opcode == 'b1101111) begin
 			// J type
@@ -474,6 +526,7 @@ module uc(input[31:0] i,
 			WriteMem <= 0;
 			WriteUImm <= 0;
 			MemToReg <= 0;
+			StoreSize <= 0;
 		end
 		else begin
 			Branch <= 0;
@@ -490,6 +543,7 @@ module uc(input[31:0] i,
 			WriteMem <= 0;
 			WriteUImm <= 0;
 			MemToReg <= 0;
+			StoreSize <= 0;
 		end
 
 endmodule
