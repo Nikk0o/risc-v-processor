@@ -1,5 +1,3 @@
-`include "aluops.vh"
-
 module alu(
 	input clk,
 	input[4:0] alu_op,
@@ -12,7 +10,7 @@ module alu(
 	reg signed[31:0] res_ = 0;
 	reg signed[31:0] res__ = 0;
 
-	always @(*)
+	always @(posedge clk)
 		case (alu_op)
 			`ADD:
 				res_ <= r1 + r2;

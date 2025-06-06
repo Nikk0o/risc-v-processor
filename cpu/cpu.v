@@ -1,5 +1,3 @@
-`include "aluops.vh"
-
 module cpu(input clk,
 		   input reset,
 		   input[31:0] i_mem_out,
@@ -15,22 +13,17 @@ module cpu(input clk,
 	reg[31:0] MAR = 0;
 	reg[31:0] MBR = 0;
 	wire[31:0] new_PC;
-
-	reg first_inst = 1;
-
-	always @(posedge clk)
-		if (reset)
-			first_inst <= 1;
-		else
-			first_inst <= 0;
+	reg[31:0] cPC = 0;
 
 	always @(negedge clk) begin
 		if (reset) begin
 			PC <= 0;
+			cPC <= 0;
 			MAR <= 0;
 		end
 		else begin
-			PC <= stop_ID ? PC : first_inst ? PC : new_PC;
+			PC <= stop_ID ? PC : new_PC;
+			cPC <= PC;
 			MAR <= PC;
 		end
 	end
@@ -42,7 +35,7 @@ module cpu(input clk,
 
 	reg[31:0] IFID_PC = 0;
 	reg[31:0] IFID_IR = 0;
-	reg IFID_reset = 0;
+	reg IFID_invalid = 0;
 
 	reg signed[31:0] IDEX_A = 0;
 	reg signed[31:0] IDEX_B = 0;
@@ -68,7 +61,7 @@ module cpu(input clk,
 	reg IDEX_LoadUns = 0;
 	reg IDEX_WritePCImm = 0;
 	reg IDEX_IsLoad = 0;
-	reg IDEX_reset = 0;
+	reg IDEX_invalid = 0;
 
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -93,8 +86,9 @@ module cpu(input clk,
 	reg[1:0] EXMEM_StoreSize = 0;
 	reg[1:0] EXMEM_LoadSize = 0;
 	reg EXMEM_LoadUns = 0;
+	reg EXMEM_IsLoad = 0;
 	reg EXMEM_WritePCImm = 0;
-	reg EXMEM_reset = 0;
+	reg EXMEM_invalid = 0;
 
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -110,20 +104,22 @@ module cpu(input clk,
 	reg MEMWB_WriteUImm = 0;
 	reg MEMWB_SetLessThan = 0;
 	reg MEMWB_WritePCImm = 0;
-	reg MEMWB_reset = 0;
+	reg MEMWB_invalid = 0;
 
 	wire fw_EX_A;
 	wire fw_EX_B;
-	wire fw_MEM_A;
-	wire fw_MEM_B;
+	wire fw_MEM_A_L, fw_MEM_A;
+	wire fw_MEM_B_L, fw_MEM_B;
 	wire stop_ID;
 
 	always @(negedge clk) begin
-		if (!stop_ID) begin
-			IFID_reset <= reset;
-			IFID_PC <= PC;
+		IFID_invalid <= reset || IDinvalid;
+
+		if (!stop_ID && !reset)
+			IFID_PC <= cPC;
+
+		if (!reset)
 			IFID_IR <= i_mem_out;
-		end
 	end
 
 	// Decodification stage
@@ -157,13 +153,17 @@ module cpu(input clk,
 	wire LoadUns;
 	wire WritePCImm;
 	wire IsLoad;
+	wire IDinvalid;
+	wire EXinvalid;
+	wire MEMinvalid;
+	wire WBinvalid;
 
 	wire signed[31:0] alu_res;
-	wire signed[31:0] a_, b_;
-	wire signed[31:0] a = fw_EX_A ? alu_res : fw_MEM_A ? d_mem_out : a_;
-	wire signed[31:0] b = fw_EX_B ? alu_res : fw_MEM_B ? d_mem_out : b_;
+	wire signed[31:0] a, b;
 	wire signed[31:0] imm;
 	wire signed[31:0] write_data;
+
+	wire take_branch = ~EXMEM_invalid && (EXMEM_Jump || EXMEM_Branch && ((EXMEM_NotEqual) ? ~EXMEM_ZERO : (EXMEM_Equal) ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB)));
 
 	imm_Gen immgen(.clk(clk),
 				   .instruction(IFID_IR),
@@ -172,12 +172,13 @@ module cpu(input clk,
 				   .funct7(funct7),
 				   .imm_out(imm));
 
-	wire wr = MEMWB_WriteReg && ~MEMWB_reset;
+	wire wr = MEMWB_WriteReg && ~MEMWB_invalid;
+
 	registers regs(.clk(clk),
 				   .rs1(rs1),
 				   .rs2(rs2),
-				   .r1(a_),
-				   .r2(b_),
+				   .r1(a),
+				   .r2(b),
 				   .rd(MEMWB_RD),
 				   .write_data(write_data),
 				   .write_enable(wr));
@@ -186,6 +187,7 @@ module cpu(input clk,
 					.opcode(opcode),
 					.funct3(funct3),
 					.funct7(funct7),
+					.take_branch(take_branch),
 					.Branch(Branch),
 					.AluSrc(AluSrc),
 					.AluOp(AluOp),
@@ -207,13 +209,11 @@ module cpu(input clk,
 					.IsLoad(IsLoad));
 
 	always @(negedge clk) begin
-		IDEX_reset <= IFID_reset;
+		IDEX_invalid <= IFID_invalid || EXinvalid;
 
-		if (IFID_reset) begin
-		end
-		else if (!stop_ID) begin
-			IDEX_A <= a;
-			IDEX_B <= b;
+		if (!stop_ID) begin
+			IDEX_A <= fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? d_mem_out : a;
+			IDEX_B <= fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? d_mem_out : b;
 			IDEX_RD <= rd;
 			IDEX_IMM <= imm;
 			IDEX_PC <= IFID_PC;
@@ -246,46 +246,44 @@ module cpu(input clk,
 	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(IDEX_A), .r2(alu_b), .res(alu_res), .zero(zero));
 
 	always @(negedge clk) begin
-		EXMEM_reset <= IDEX_reset;
+		EXMEM_invalid <= IDEX_invalid || MEMinvalid;
 
-		if (IDEX_reset) begin
-		end
-		else begin
-			EXMEM_IMM <= IDEX_IMM;
-			EXMEM_PCIMM <= IDEX_PC + (IDEX_IMM << 1);
-			EXMEM_PC <= IDEX_PC;
-			EXMEM_MSB <= alu_res[31];
-			EXMEM_ZERO <= zero;
-			EXMEM_ALURES <= alu_res;
-			EXMEM_IMM <= IDEX_IMM;
-			EXMEM_B <= IDEX_B;
-			EXMEM_RD <= IDEX_RD;
-			EXMEM_LessThan <= IDEX_LessThan;
-			EXMEM_Equal <= IDEX_Equal;
-			EXMEM_WriteReg <= IDEX_WriteReg;
-			EXMEM_WriteMem <= IDEX_WriteMem;
-			EXMEM_MemToReg <= IDEX_MemToReg;
-			EXMEM_PCtoReg <= IDEX_PCtoReg;
-			EXMEM_WriteUImm <= IDEX_WriteUImm;
-			EXMEM_PCImm <= IDEX_PCImm;
-			EXMEM_SetLessThan <= IDEX_SetLessThan;
-			EXMEM_Branch <= IDEX_Branch;
-			EXMEM_Jump <= IDEX_Jump;
-			EXMEM_NotEqual <= IDEX_NotEqual;
-			EXMEM_StoreSize <= IDEX_StoreSize;
-			EXMEM_LoadSize <= IDEX_LoadSize;
-			EXMEM_LoadUns <= IDEX_LoadUns;
-			EXMEM_WritePCImm <= IDEX_WritePCImm;
-		end
+		EXMEM_IMM <= IDEX_IMM;
+		// idk if i have to shift IDEX_IMM to the left
+		EXMEM_PCIMM <= (IDEX_IMM < 0) ? IDEX_PC - (-(IDEX_IMM)) : IDEX_PC + (IDEX_IMM);
+		EXMEM_PC <= IDEX_PC;
+		EXMEM_MSB <= alu_res[31];
+		EXMEM_ZERO <= zero;
+		EXMEM_ALURES <= alu_res;
+		EXMEM_IMM <= IDEX_IMM;
+		EXMEM_B <= IDEX_B;
+		EXMEM_RD <= IDEX_RD;
+		EXMEM_LessThan <= IDEX_LessThan;
+		EXMEM_Equal <= IDEX_Equal;
+		EXMEM_WriteReg <= IDEX_WriteReg;
+		EXMEM_WriteMem <= IDEX_WriteMem;
+		EXMEM_MemToReg <= IDEX_MemToReg;
+		EXMEM_PCtoReg <= IDEX_PCtoReg;
+		EXMEM_WriteUImm <= IDEX_WriteUImm;
+		EXMEM_PCImm <= IDEX_PCImm;
+		EXMEM_SetLessThan <= IDEX_SetLessThan;
+		EXMEM_Branch <= IDEX_Branch;
+		EXMEM_Jump <= IDEX_Jump;
+		EXMEM_NotEqual <= IDEX_NotEqual;
+		EXMEM_StoreSize <= IDEX_StoreSize;
+		EXMEM_LoadSize <= IDEX_LoadSize;
+		EXMEM_LoadUns <= IDEX_LoadUns;
+		EXMEM_WritePCImm <= IDEX_WritePCImm;
+		EXMEM_IsLoad <= IDEX_IsLoad;
 	end
 
 	// Memory stage
 
 	wire[31:0] PC_ = EXMEM_PCImm ? EXMEM_PCIMM : EXMEM_ALURES;
-	assign new_PC = (EXMEM_Jump || EXMEM_Branch && ((EXMEM_NotEqual) ? ~EXMEM_ZERO : (EXMEM_Equal) ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB))) ? PC_ : PC + 32'd4;
+	assign new_PC = take_branch ? PC_ : PC + 4;
 
 	always @(negedge clk)
-		if (EXMEM_reset || ~(|EXMEM_LoadSize))
+		if (EXMEM_invalid || ~(|EXMEM_LoadSize))
 			MEMWB_LOAD <= 0;
 		else if (EXMEM_LoadSize == 1)
 			if (EXMEM_LoadUns) begin
@@ -309,29 +307,25 @@ module cpu(input clk,
 			MEMWB_LOAD <= d_mem_out;
 
 	always @(negedge clk) begin
-		MEMWB_reset <= EXMEM_reset;
+		MEMWB_invalid <= EXMEM_invalid || WBinvalid;
 
-		if (EXMEM_reset) begin
-		end
-		else begin
-			MEMWB_ALURES <= EXMEM_ALURES;
-			MEMWB_PC <= EXMEM_PC;
-			MEMWB_IMM <= EXMEM_IMM;
-			MEMWB_MSB <= EXMEM_MSB;
-			MEMWB_RD <= EXMEM_RD;
-			MEMWB_WriteReg <= EXMEM_WriteReg;
-			MEMWB_WriteMem <= EXMEM_WriteMem;
-			MEMWB_MemToReg <= EXMEM_MemToReg;
-			MEMWB_PCtoReg <= EXMEM_PCtoReg;
-			MEMWB_WriteUImm <= EXMEM_WriteUImm;
-			MEMWB_SetLessThan <= EXMEM_SetLessThan;
-			MEMWB_PCIMM <= EXMEM_PCIMM;
-			MEMWB_WritePCImm <= EXMEM_WritePCImm;
-		end
+		MEMWB_ALURES <= EXMEM_ALURES;
+		MEMWB_PC <= EXMEM_PC;
+		MEMWB_IMM <= EXMEM_IMM;
+		MEMWB_MSB <= EXMEM_MSB;
+		MEMWB_RD <= EXMEM_RD;
+		MEMWB_WriteReg <= EXMEM_WriteReg;
+		MEMWB_WriteMem <= EXMEM_WriteMem;
+		MEMWB_MemToReg <= EXMEM_MemToReg;
+		MEMWB_PCtoReg <= EXMEM_PCtoReg;
+		MEMWB_WriteUImm <= EXMEM_WriteUImm;
+		MEMWB_SetLessThan <= EXMEM_SetLessThan;
+		MEMWB_PCIMM <= EXMEM_PCIMM;
+		MEMWB_WritePCImm <= EXMEM_WritePCImm;
 	end
 
 	assign d_mem_in = EXMEM_B;
-	assign d_mem_wen = EXMEM_WriteMem && ~EXMEM_reset;
+	assign d_mem_wen = EXMEM_WriteMem && ~EXMEM_invalid;
 	assign d_addr = EXMEM_ALURES;
 	assign write_data_size = EXMEM_StoreSize;
 	
@@ -352,9 +346,13 @@ assign write_data = (reset) ? 0 :
 											MEMWB_ALURES;
 
 
+	wire rs = reset;
+
 	hazard_Detection_Unit haz(.clk(clk),
 					.reset(reset),
+					.took_branch(take_branch),
 					.is_load_EX(IDEX_IsLoad),
+					.is_load_MEM(EXMEM_IsLoad),
 					.rs1(rs1),
 					.rs2(rs2),
 					.rd(rd),
@@ -362,7 +360,13 @@ assign write_data = (reset) ? 0 :
 					.forward_EX_B(fw_EX_B),
 					.forward_MEM_A(fw_MEM_A),
 					.forward_MEM_B(fw_MEM_B),
-					.stop_ID(stop_ID));
+					.forward_MEM_A_L(fw_MEM_A_L),
+					.forward_MEM_B_L(fw_MEM_B_L),
+					.stop_ID(stop_ID),
+					.set_invalid_EX(EXinvalid),
+					.set_invalid_ID(IDinvalid),
+					.set_invalid_MEM(MEMinvalid),
+					.set_invalid_WB(WBinvalid));
 
 endmodule
 
@@ -418,28 +422,50 @@ module uc(input clk,
 		  input[6:0] opcode,
 		  input[2:0] funct3,
 		  input[6:0] funct7,
-		  output reg Branch,
-		  output reg AluSrc,
-		  output reg MemToReg,
-		  output reg WriteMem,
-		  output reg[4:0] AluOp,
-		  output reg WriteReg,
-		  output reg LessThan,
-		  output reg Equal,
-		  output reg SetLessThan,
-		  output reg PCtoReg,
-		  output reg WriteUImm,
-		  output reg PCImm,
-	      output reg Jump,
-		  output reg NotEqual,
-		  output reg[1:0] StoreSize,
-	      output reg[1:0] LoadSize,
-		  output reg LoadUns,
-		  output reg WritePCImm,
-		  output reg IsLoad);
+		  input take_branch,
+		  output reg Branch = 0,
+		  output reg AluSrc = 0,
+		  output reg MemToReg = 0,
+		  output reg WriteMem = 0,
+		  output reg[4:0] AluOp = 0,
+		  output reg WriteReg = 0,
+		  output reg LessThan = 0,
+		  output reg Equal = 0,
+		  output reg SetLessThan = 0,
+		  output reg PCtoReg = 0,
+		  output reg WriteUImm = 0,
+		  output reg PCImm = 0,
+	      output reg Jump = 0,
+		  output reg NotEqual = 0,
+		  output reg[1:0] StoreSize = 0,
+	      output reg[1:0] LoadSize = 0,
+		  output reg LoadUns = 0,
+		  output reg WritePCImm = 0,
+		  output reg IsLoad = 0);
 
 	always @(posedge clk)
-		if (opcode == 'b0110011) begin
+		if (take_branch) begin
+			Branch <= 0;
+			Jump <= 0;
+			LessThan <= 0;
+			Equal <= 0;
+			NotEqual <= 0;
+			AluSrc <= 0;
+			AluOp <= `NONE;
+			PCImm <= 0;
+			SetLessThan <= 0;
+			PCtoReg <= 0;
+			WriteReg <= 0;
+			WriteMem <= 0;
+			WriteUImm <= 0;
+			MemToReg <= 0;
+			StoreSize <= 0;
+			LoadSize <= 0;
+			LoadUns <= 0;
+			WritePCImm <= 0;
+			IsLoad <= 0;
+		end
+		else if (opcode == 'b0110011) begin
 			// R type
 			Branch <= 0;
 			Jump <= 0;
@@ -513,7 +539,7 @@ module uc(input clk,
 				Jump <= 0;
 				SetLessThan <= 0;
 				PCtoReg <= 0;
-				AluOp <= `NONE;
+				AluOp <= `ADD;
 				PCImm <= 0;
 				WriteReg <= 1;
 				IsLoad <= 1;
@@ -538,8 +564,8 @@ module uc(input clk,
 				MemToReg <= 0;
 				SetLessThan <= 0;
 				PCtoReg <= 1;
-				AluOp <= `NONE;
-				PCImm <= 1;
+				AluOp <= `ADD;
+				PCImm <= 0;
 				WriteReg <= 1;
 				LoadSize <= 0;
 				LoadUns <= 0;
@@ -592,9 +618,9 @@ module uc(input clk,
 			Branch <= 0;
 			AluSrc <= 1;
 			MemToReg <= 1;
-			WriteMem <= 0;
+			WriteMem <= 1;
 			AluOp <= `ADD;
-			WriteReg <= 1;
+			WriteReg <= 0;
 			SetLessThan <= 0;
 			PCtoReg <= 0;
 			WriteUImm <= 0;
@@ -619,7 +645,7 @@ module uc(input clk,
 		end
 		else if (opcode == 'b1100011) begin
 			// B type
-			AluOp <= `NONE;
+			AluOp <= `SUB;
 			AluSrc <= 0;
 			MemToReg <= 0;
 			WriteMem <= 0;
@@ -746,7 +772,7 @@ module instruction_Decoder(input[31:0] instruction, input clk, output reg[4:0] r
 
 	wire[6:0] opcode = instruction[6:0];
 
-	always @(posedge clk)
+	always @(*)
 		if (opcode == 'b0110011) begin
 			rd <= instruction[11:7];
 			rs1 <= instruction[19:15];
