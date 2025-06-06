@@ -1,3 +1,5 @@
+`include "aluops.vh"
+
 module alu(
 	input clk,
 	input[4:0] alu_op,

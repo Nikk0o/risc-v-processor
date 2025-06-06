@@ -1,3 +1,5 @@
+`include "aluops.vh"
+
 module cpu(input clk,
 		   input reset,
 		   input[31:0] i_mem_out,

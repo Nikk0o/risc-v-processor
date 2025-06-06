@@ -1,5 +1,11 @@
 all:
 
+synthtest:
+	yosys -p "read_verilog cpu/*; hierarchy -top cpu; synth"
+
+shownetlist:
+	yosys -p "read_verilog cpu/*; hierarchy -top cpu; show cpu"
+
 test.factorial:
 	iverilog tests/factorial/tb.v cpu/* -s tb -o a.vvp
 	mv a.vvp tmp/

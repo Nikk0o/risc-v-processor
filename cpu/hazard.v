@@ -47,6 +47,10 @@ module hazard_Detection_Unit(input clk,
 			stop_ID <= 0;
 			rs1_nz <= 0;
 			rs2_nz = 0;
+			set_invalid_EX <= 0;
+			set_invalid_MEM <= 0;
+			set_invalid_WB <= 0;
+			set_invalid_ID <= 0;
 		end
 		else begin
 			ID_rs1 = rs1;
