@@ -3,23 +3,26 @@ module registers(input clk,
 				 input[4:0] rs2,
 				 input[4:0] rd,
 				 input write_enable,
+				 input read_enable,
 				 input signed[31:0] write_data,
-				 output reg signed[31:0] r1,
-				 output reg signed[31:0] r2);
+				 output signed[31:0] r1 = 0,
+				 output signed[31:0] r2 = 0);
 
 	reg signed[31:0] regs[31:0];
 	wire wen = write_enable && |rd;
+	reg[4:0] rd_internal = 0;
 
 	// these must update on the rising edge to make data
 	// avalible on the clock cycle
 	always @(posedge clk) begin
+		rd_internal <= rd;
 
 		if (wen)
-			regs[rd] = write_data;
-
-		r1 <= regs[rs1];
-		r2 <= regs[rs2];
+			regs[rd] <= write_data;
 	end
+
+	assign r1 = regs[rs1];
+	assign r2 = regs[rs2];
 
 	integer i;
 	initial
