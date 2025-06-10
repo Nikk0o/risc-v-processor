@@ -1,0 +1,12 @@
+IO_LOC "clk" 52;
+IO_LOC "lcd_data[9]" 32;
+IO_LOC "lcd_data[8]" 31;
+IO_LOC "lcd_data[0]" 48;
+IO_LOC "lcd_data[1]" 70;
+IO_LOC "lcd_data[2]" 71;
+IO_LOC "lcd_data[3]" 72;
+IO_LOC "lcd_data[4]" 73;
+IO_LOC "lcd_data[5]" 74;
+IO_LOC "lcd_data[6]" 75;
+IO_LOC "lcd_data[7]" 76;
+IO_LOC "lcd_en" 49;

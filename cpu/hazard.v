@@ -20,8 +20,6 @@ module hazard_Detection_Unit(input clk,
 							 output reg set_invalid_WB = 0,
 							 output reg stop_ID = 0);
 
-	reg[4:0] ID_rs1  = 0;
-	reg[4:0] ID_rs2  = 0;
 	reg[4:0] ID_rd   = 0;
 	reg[4:0] EX_rd   = 0;
 	reg[4:0] MEM_rd  = 0;
@@ -38,8 +36,6 @@ module hazard_Detection_Unit(input clk,
 
 	always @(*) begin
 		if (reset) begin
-			ID_rs1 = 0;
-			ID_rs2 = 0;
 			forward_EX_A = 0;
 			forward_EX_B = 0;
 			forward_MEM_A = 0;
@@ -55,20 +51,18 @@ module hazard_Detection_Unit(input clk,
 			set_invalid_ID = 0;
 		end
 		else begin
-			ID_rs1 = rs1;
-			ID_rs2 = rs2;
 			rs1_nz = |rs1;
 			rs2_nz = |rs2;
 
 			forward_EX_A = ~EX_invalid && rs1 == EX_rd && rs1_nz;
 			forward_EX_B = ~EX_invalid && rs2 == EX_rd && rs2_nz;
-			forward_MEM_A = ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (ID_rs1 == MEM_rd));
-			forward_MEM_B = ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (ID_rs2 == MEM_rd));
-			forward_MEM_A_L = ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (ID_rs1 == MEM_rd));
-			forward_MEM_B_L = ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (ID_rs2 == MEM_rd));
+			forward_MEM_A = ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
+			forward_MEM_B = ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
+			forward_MEM_A_L = ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
+			forward_MEM_B_L = ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
 
 			
-			stop_ID = ~EX_invalid && is_load_EX && (ID_rs1 == EX_rd && rs1_nz || ID_rs2 == EX_rd && rs2_nz);
+			stop_ID = is_load_EX && (forward_EX_A || forward_EX_B);
 
 			set_invalid_WB = 0;
 

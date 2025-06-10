@@ -42,7 +42,7 @@ module vga(
 			$dumpvars(0, CPU.regs.regs[i]);
 			$dumpvars(0, inst_mem[i]);
 		end
-		$dumpvars(0, CPU, data_mem[0], data_mem[1], data_mem[2], data_mem[3], rgb);
+		$dumpvars(0, CPU, data_mem[0], data_mem[1], data_mem[2], data_mem[3], data_mem[31], rgb);
 	end
 `endif
 
@@ -56,7 +56,7 @@ module vga(
 
 	// CPU IO
 	
-	reg[7:0] inst_mem[43:0];
+	reg[7:0] inst_mem[63:0];
 	reg[7:0] data_mem[31:0];
 
 	wire w_en;
@@ -67,19 +67,17 @@ module vga(
 	reg[31:0] d_mem_out = 0;
 
 `ifdef FPGA
-	reg cpu_clk = 0;
-	integer cntt = 0;
-	always @(posedge clk)
-		if (~reset) begin
-			cpu_clk <= 0;
-			cntt <= 0;
-		end
-		else if (cntt == 26) begin
-			cpu_clk <= ~cpu_clk;
-			cntt <= 0;
-		end
-		else
-			cntt <= cntt + 1;
+	wire cpu_clk;
+	rPLL #( // For GW1NR-9C C6/I5 (Tang Nano 9K proto dev board)
+	  .FCLKIN("27"),
+	  .IDIV_SEL(1), // -> PFD = 13.5 MHz (range: 3-400 MHz)
+	  .FBDIV_SEL(2), // -> CLKOUT = 40.5 MHz (range: 3.125-600 MHz)
+	  .ODIV_SEL(16) // -> VCO = 648 MHz (range: 400-1200 MHz)
+	) pllcpu (.CLKOUTP(), .CLKOUTD(), .CLKOUTD3(), .RESET(1'b0), .RESET_P(1'b0), .CLKFB(1'b0), .FBDSEL(6'b0), .IDSEL(6'b0), .ODSEL(6'b0), .PSDA(4'b0), .DUTYDA(4'b0), .FDLY(4'b0),
+	  .CLKIN(clk), // 27 MHz
+	  .CLKOUT(cpu_clk), // 40.5 MHz
+	  .LOCK(clk_lock)
+	);
 `else
 	wire cpu_clk = vga_clk;
 `endif
@@ -89,19 +87,32 @@ module vga(
 
 	always @(posedge cpu_clk) begin
 		if (w_en) begin
-			data_mem[d_addr + 3] <= d_mem_in[7:0];
-			data_mem[d_addr + 2] <= d_mem_in[15:8];
-			data_mem[d_addr + 1] <= d_mem_in[23:16];
-			data_mem[d_addr] <= d_mem_in[31:24];
+			if (size == 1)
+				data_mem[d_addr] <= d_mem_in[7:0];
+			else if (size == 2) begin
+				data_mem[d_addr + 1] <= d_mem_in[7:0];
+				data_mem[d_addr] <= d_mem_in[15:8];
+			end
+			else if (size == 3) begin
+				data_mem[d_addr + 3] <= d_mem_in[7:0];
+				data_mem[d_addr + 2] <= d_mem_in[15:8];
+				data_mem[d_addr + 1] <= d_mem_in[23:16];
+				data_mem[d_addr] <= d_mem_in[31:24];
+			end
 		end
+
+		data_mem[31] <=  {7'd0, cx >= 640 && cy < 480};
 	end
 
 	always @(posedge vga_clk)
-		rgb <= {cpu_clk, 1'b0, |{data_mem[3], data_mem[2], data_mem[1], data_mem[0]}};
+		rgb <= {cx < 640 && cy < 480 && data_mem[0][2], cx < 640 && cy < 480 && data_mem[0][1], cx < 640 && cy < 480 && data_mem[0][0]};
 
 	always @(posedge cpu_clk) begin
-		i_mem_out <= addr > 40 ? 0 : {inst_mem[addr], inst_mem[addr + 1], inst_mem[addr + 2], inst_mem[addr + 3]};
-		d_mem_out <= {data_mem[d_addr], data_mem[d_addr + 1], data_mem[d_addr + 2], data_mem[d_addr + 3]};
+		i_mem_out <= addr > 60 ? 32'd0 : {inst_mem[addr], inst_mem[addr + 1], inst_mem[addr + 2], inst_mem[addr + 3]};
+		d_mem_out <= {size == 3 ? data_mem[d_addr] : 8'd0,
+					  size == 3 ? data_mem[d_addr + 1] : 8'd0,
+					  size == 3 ? data_mem[d_addr + 2] : size == 2 ? data_mem[d_addr] : 8'd0,
+					  size == 3 ? data_mem[d_addr + 3] : size == 2 ? data_mem[d_addr + 1] : size == 1 ? data_mem[d_addr] : 8'd0};
 	end
 
 	wire nr = ~reset;
@@ -110,9 +121,9 @@ module vga(
 	integer zz;
 	initial begin
 		$dumpfile("tmp/a.vcd");
-		$readmemh("tests/vga/mem.hex", inst_mem, 0, 43);
+		$readmemh("tests/vga/mem.hex", inst_mem, 0, 63);
 		for (zz = 0; zz < 32; zz = zz + 1)
-			data_mem[zz] = 2 ** zz;
+			data_mem[zz] = 0;
 	end
 
 endmodule

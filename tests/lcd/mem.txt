@@ -1,0 +1,37 @@
+# initialization
+
+li t0, 0b000011
+sw t0, 0(zero)
+jal ra, toggle
+jal ra, toggle
+li t0, 0b1111
+sw t0, 0(zero)
+jal ra, toggle
+li t0, 1
+sw t0, 0(zero)
+jal ra, toggle
+li t0, 0
+sw t0, 0(zero)
+jal ra, toggle
+
+# write a :3
+li t0, 0b00000001
+sw t0, 0(zero)
+jal ra, toggle
+li t0, 0b0101110011
+jal ra, toggle
+li t0, 0b1100110011
+jal ra, toggle
+
+loop:
+j nxt
+nxt:
+j loop
+
+
+toggle:
+li t1, 1
+sb t1, 4(zero)
+li t1, 0
+sb t1, 4(zero)
+jalr ra, ra

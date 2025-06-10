@@ -61,7 +61,7 @@ module alu(
 			illegal_op <= 0;
 		`endif
 
-	assign zero = res_ == 0;
+	assign zero = ~(|res_);
 	assign res = res_;
 
 endmodule

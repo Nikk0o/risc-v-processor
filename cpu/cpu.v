@@ -115,13 +115,10 @@ module cpu(input clk,
 	wire stop_ID;
 
 	always @(negedge clk) begin
-		IFID_invalid <= reset || IDinvalid;
+		IFID_invalid <= reset | IDinvalid;
 
-		if (!stop_ID && !reset)
-			IFID_PC <= cPC;
-
-		if (!reset && !stop_ID)
-			IFID_IR <= i_mem_out;
+		IFID_PC <= stop_ID ? IFID_PC : cPC;
+		IFID_IR <= stop_ID ? IFID_IR : i_mem_out;
 	end
 
 	// Decodification stage
@@ -133,8 +130,6 @@ module cpu(input clk,
 	wire[6:0] opcode = IFID_IR[6:0];
 	wire[2:0] funct3 = IFID_IR[14:12];
 	wire[6:0] funct7 = IFID_IR[31:25];
-
-	//instruction_Decoder decode(.clk(clk), .instruction(IFID_IR), .rs1(rs1), .rs2(rs2), .rd(rd));
 
 	wire Branch;
 	wire AluSrc;
@@ -167,7 +162,7 @@ module cpu(input clk,
 
 	reg take_branch = 0;
 	always @(posedge clk)
-		take_branch <= ~EXMEM_invalid && (EXMEM_Jump || EXMEM_Branch && (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB)));
+		take_branch <= ~stop_ID && ~EXMEM_invalid && (EXMEM_Jump || EXMEM_Branch && (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB)));
 
 	imm_Gen immgen(.clk(clk),
 				   .instruction(IFID_IR),
@@ -179,6 +174,7 @@ module cpu(input clk,
 	wire wr = MEMWB_WriteReg && ~MEMWB_invalid;
 
 	registers regs(.clk(clk),
+				   .reset(1'b0),
 				   .rs1(rs1),
 				   .rs2(rs2),
 				   .r1(a),
@@ -212,7 +208,7 @@ module cpu(input clk,
 					.IsLoad(IsLoad));
 
 	always @(negedge clk) begin
-		IDEX_invalid <= IFID_invalid || EXinvalid;
+		IDEX_invalid <= IFID_invalid | EXinvalid;
 
 		if (!stop_ID) begin
 			IDEX_A <= fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? d_mem_out : a;
@@ -249,7 +245,7 @@ module cpu(input clk,
 	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(IDEX_A), .r2(alu_b), .res(alu_res), .zero(zero));
 
 	always @(negedge clk) begin
-		EXMEM_invalid <= IDEX_invalid || MEMinvalid;
+		EXMEM_invalid <= IDEX_invalid | MEMinvalid;
 
 		EXMEM_IMM <= IDEX_IMM;
 		EXMEM_PCIMM <= (IDEX_IMM < 0) ? IDEX_PC - (-(IDEX_IMM)) : IDEX_PC + (IDEX_IMM);
@@ -287,20 +283,20 @@ module cpu(input clk,
 	always @(negedge clk)
 		if (EXMEM_LoadSize == 1)
 			if (EXMEM_LoadUns) begin
-				MEMWB_LOAD[7:0] <= d_mem_out[31:25];
+				MEMWB_LOAD[7:0] <= d_mem_out[7:0];
 				MEMWB_LOAD[31:8] <= 0;
 			end
 			else begin
-				MEMWB_LOAD[7:0] <= d_mem_out[31:25];
+				MEMWB_LOAD[7:0] <= d_mem_out[7:0];
 				MEMWB_LOAD[31:8] <= {24{d_mem_out[31]}};
 			end
 		else if (EXMEM_LoadSize == 2)
 			if (EXMEM_LoadUns) begin
-				MEMWB_LOAD[15:0] <= d_mem_out[31:16];
+				MEMWB_LOAD[15:0] <= d_mem_out[15:0];
 				MEMWB_LOAD[31:16] <= 0;
 			end
 			else begin
-				MEMWB_LOAD[15:0] <= d_mem_out[31:16];
+				MEMWB_LOAD[15:0] <= d_mem_out[15:0];
 				MEMWB_LOAD[31:16] <= {16{d_mem_out[31]}};
 			end
 		else if (EXMEM_LoadSize == 3)
