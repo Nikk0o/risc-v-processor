@@ -1,7 +1,0 @@
-IO_LOC "clk" 52;
-IO_LOC "rgb[0]" 69;
-IO_LOC "rgb[1]" 68;
-IO_LOC "rgb[2]" 57;
-IO_LOC "hs" 56;
-IO_LOC "vs" 55;
-IO_LOC "reset" 3;
