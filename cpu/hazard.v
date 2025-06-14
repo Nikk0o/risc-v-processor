@@ -56,10 +56,10 @@ module hazard_Detection_Unit(input clk,
 
 			forward_EX_A = ~EX_invalid && rs1 == EX_rd && rs1_nz;
 			forward_EX_B = ~EX_invalid && rs2 == EX_rd && rs2_nz;
-			forward_MEM_A = ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
-			forward_MEM_B = ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
-			forward_MEM_A_L = ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
-			forward_MEM_B_L = ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
+			forward_MEM_A <= ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
+			forward_MEM_B <= ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
+			forward_MEM_A_L <= ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
+			forward_MEM_B_L <= ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
 
 			
 			stop_ID = is_load_EX && (forward_EX_A || forward_EX_B);

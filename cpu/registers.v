@@ -9,6 +9,7 @@ module registers(input clk,
 				 output signed[31:0] r2);
 
 	reg signed[31:0] regs[31:0];
+	reg[31:0] invalid_r = 0;
 	wire wen = write_enable && |rd;
 	reg[4:0] rd_internal = 0;
 
@@ -18,20 +19,21 @@ module registers(input clk,
 	always @(posedge clk) begin
 		if (reset) begin
 			rd_internal <= 0;
-
-			for (j = 0; j < 32; j = j + 1)
-				regs[j] <= 0;
+			invalid_r <= {{31{1'b1}}, 1'b0};
 		end
 		else begin
 			rd_internal <= rd;
 
-			if (wen)
+			if (wen) begin
 				regs[rd] <= write_data;
+				if (invalid_r[rd])
+					invalid_r[rd] <= 0;
+			end
 		end
 	end
 
-	assign r1 = regs[rs1];
-	assign r2 = regs[rs2];
+	assign r1 = rd_internal == rd && |rd ? write_data : invalid_r[rs1] ? 32'd0 : regs[rs1];
+	assign r2 = rd_internal == rd && |rd ? write_data : invalid_r[rs2] ? 32'd0 : regs[rs2];
 
 	integer i;
 	initial

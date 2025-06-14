@@ -3,19 +3,24 @@
 module cpu(input clk,
 		   input reset,
 		   input[31:0] i_mem_out,
-		   output signed[31:0] d_mem_in,
-		   output[1:0] write_data_size,
-		   input signed[31:0] d_mem_out,
-		   output d_mem_wen,
+		   output signed[31:0] data_mem_in,
+		   output[1:0] rw_data_size,
+		   input signed[31:0] data_mem_out,
+		   output data_mem_write_enable,
+		   output data_mem_read_enable,
+		   output inst_mem_read_enable,
 		   output[31:0] addr,
 		   output[31:0] d_addr);
 
-	// Fetch stage
+	// In this CPU, PC points to two instructions ahead instead of one
+	// and cPC points to the next instruction. I did this because of a
+	// simulation error that made the PC initialize as 4 instead of 0
 	reg[31:0] PC = 0;
 	reg[31:0] MAR = 0;
-	reg[31:0] MBR = 0;
 	wire[31:0] new_PC;
 	reg[31:0] cPC = 0;
+
+	assign inst_mem_read_enable = 1;
 
 	always @(negedge clk) begin
 		if (reset) begin
@@ -35,10 +40,12 @@ module cpu(input clk,
 
 	// Pipeline registers
 
+	// Decoding stage
 	reg[31:0] IFID_PC = 0;
 	reg[31:0] IFID_IR = 0;
 	reg IFID_invalid = 0;
 
+	// Execution stage
 	reg signed[31:0] IDEX_A = 0;
 	reg signed[31:0] IDEX_B = 0;
 	reg[4:0] IDEX_RD = 0;
@@ -53,26 +60,22 @@ module cpu(input clk,
 	reg IDEX_WriteMem = 0;
 	reg IDEX_MemToReg = 0;
 	reg IDEX_PCtoReg = 0;
-	reg IDEX_WriteUImm = 0;
 	reg IDEX_PCImm = 0;
 	reg IDEX_SetLessThan = 0;
 	reg IDEX_Jump = 0;
 	reg IDEX_NotEqual = 0;
-	reg[1:0] IDEX_StoreSize = 0;
-	reg[1:0] IDEX_LoadSize = 0;
+	reg[1:0] IDEX_MemSize = 0;
 	reg IDEX_LoadUns = 0;
-	reg IDEX_WritePCImm = 0;
-	reg IDEX_IsLoad = 0;
 	reg IDEX_invalid = 0;
+	reg IDEX_SubAB = 0;
 
+	// Memory access stage
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
-	reg[31:0] EXMEM_PCIMM = 0;
 	reg EXMEM_MSB = 0;
 	reg EXMEM_ZERO = 0;
-	reg signed[31:0] EXMEM_B = 0;
+	reg signed[31:0] EXMEM_OTHER = 0;
 	reg signed[31:0] EXMEM_ALURES = 0;
-	reg signed[31:0] EXMEM_IMM = 0;
 	reg EXMEM_Branch = 0;
 	reg EXMEM_LessThan = 0;
 	reg EXMEM_Equal = 0;
@@ -80,32 +83,23 @@ module cpu(input clk,
 	reg EXMEM_WriteMem = 0;
 	reg EXMEM_MemToReg = 0;
 	reg EXMEM_PCtoReg = 0;
-	reg EXMEM_WriteUImm = 0;
-	reg EXMEM_PCImm = 0;
 	reg EXMEM_SetLessThan = 0;
 	reg EXMEM_Jump = 0;
 	reg EXMEM_NotEqual = 0;
-	reg[1:0] EXMEM_StoreSize = 0;
-	reg[1:0] EXMEM_LoadSize = 0;
+	reg[1:0] EXMEM_MemSize = 0;
 	reg EXMEM_LoadUns = 0;
-	reg EXMEM_IsLoad = 0;
-	reg EXMEM_WritePCImm = 0;
 	reg EXMEM_invalid = 0;
 
+	// Write back stage
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
-	reg signed[31:0] MEMWB_IMM = 0;
 	reg signed[31:0] MEMWB_LOAD = 0;
 	reg signed[31:0] MEMWB_ALURES = 0;
-	reg[31:0] MEMWB_PCIMM = 0;
 	reg MEMWB_MSB = 0;
 	reg MEMWB_WriteReg = 0;
-	reg MEMWB_WriteMem = 0;
 	reg MEMWB_MemToReg = 0;
 	reg MEMWB_PCtoReg = 0;
-	reg MEMWB_WriteUImm = 0;
 	reg MEMWB_SetLessThan = 0;
-	reg MEMWB_WritePCImm = 0;
 	reg MEMWB_invalid = 0;
 
 	wire fw_EX_A;
@@ -121,16 +115,15 @@ module cpu(input clk,
 		IFID_IR <= stop_ID ? IFID_IR : i_mem_out;
 	end
 
-	// Decodification stage
-
-	wire[4:0] rs1 = IFID_IR[19:15];
-	wire[4:0] rs2 = IFID_IR[24:20];
-	wire[4:0] rd = IFID_IR[11:7];
-
 	wire[6:0] opcode = IFID_IR[6:0];
 	wire[2:0] funct3 = IFID_IR[14:12];
 	wire[6:0] funct7 = IFID_IR[31:25];
 
+	wire[4:0] rs1 = |(opcode[6:2] - 'b01101) | |(opcode[6:2] - 'b00101) ? 0 : IFID_IR[19:15];
+	wire[4:0] rs2 = IFID_IR[24:20];
+	wire[4:0] rd = IFID_IR[11:7];
+
+	// Control unit signals
 	wire Branch;
 	wire AluSrc;
 	wire LessThan;
@@ -140,29 +133,25 @@ module cpu(input clk,
 	wire WriteMem;
 	wire MemToReg;
 	wire PCtoReg;
-	wire WriteUImm;
 	wire PCImm;
 	wire SetLessThan;
 	wire Jump;
 	wire NotEqual;
-	wire[1:0] StoreSize;
-	wire[1:0] LoadSize;
+	wire[1:0] MemSize;
 	wire LoadUns;
 	wire WritePCImm;
-	wire IsLoad;
 	wire IDinvalid;
 	wire EXinvalid;
 	wire MEMinvalid;
 	wire WBinvalid;
+	wire SubAB;
 
 	wire signed[31:0] alu_res;
 	wire signed[31:0] a, b;
 	wire signed[31:0] imm;
 	wire signed[31:0] write_data;
 
-	reg take_branch = 0;
-	always @(posedge clk)
-		take_branch <= ~stop_ID && ~EXMEM_invalid && (EXMEM_Jump || EXMEM_Branch && (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO && ~EXMEM_MSB)));
+	wire take_branch = ~stop_ID & ~EXMEM_invalid & (EXMEM_Jump | EXMEM_Branch & (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_ZERO & ~EXMEM_MSB)));
 
 	imm_Gen immgen(.clk(clk),
 				   .instruction(IFID_IR),
@@ -171,10 +160,10 @@ module cpu(input clk,
 				   .funct7(funct7),
 				   .imm_out(imm));
 
-	wire wr = MEMWB_WriteReg && ~MEMWB_invalid;
+	wire wr = MEMWB_WriteReg & ~MEMWB_invalid;
 
 	registers regs(.clk(clk),
-				   .reset(1'b0),
+				   .reset(reset),
 				   .rs1(rs1),
 				   .rs2(rs2),
 				   .r1(a),
@@ -184,7 +173,7 @@ module cpu(input clk,
 				   .write_enable(wr));
 
 	uc control_unit(.clk(clk),
-					.opcode(opcode),
+					.opcode(opcode[6:2]),
 					.funct3(funct3),
 					.funct7(funct7),
 					.Branch(Branch),
@@ -197,22 +186,19 @@ module cpu(input clk,
 					.MemToReg(MemToReg),
 					.PCtoReg(PCtoReg),
 					.PCImm(PCImm),
-					.WriteUImm(WriteUImm),
 					.SetLessThan(SetLessThan),
 					.Jump(Jump),
 					.NotEqual(NotEqual),
-					.StoreSize(StoreSize),
-					.LoadSize(LoadSize),
+					.MemSize(MemSize),
 					.LoadUns(LoadUns),
-					.WritePCImm(WritePCImm),
-					.IsLoad(IsLoad));
+					.SubAB(SubAB));
 
 	always @(negedge clk) begin
-		IDEX_invalid <= IFID_invalid | EXinvalid;
+		IDEX_invalid <= IFID_invalid | EXinvalid | opcode[1:0] != 2'b11;
 
 		if (!stop_ID) begin
-			IDEX_A <= fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? d_mem_out : a;
-			IDEX_B <= fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? d_mem_out : b;
+			IDEX_A <= fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? data_mem_out : a;
+			IDEX_B <= fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? data_mem_out : b;
 			IDEX_RD <= rd;
 			IDEX_IMM <= imm;
 			IDEX_PC <= IFID_PC;
@@ -224,37 +210,33 @@ module cpu(input clk,
 			IDEX_WriteMem <= WriteMem;
 			IDEX_MemToReg <= MemToReg;
 			IDEX_PCtoReg <= PCtoReg;
-			IDEX_WriteUImm <= WriteUImm;
 			IDEX_PCImm <= PCImm;
 			IDEX_SetLessThan <= SetLessThan;
 			IDEX_Branch <= Branch;
 			IDEX_Jump <= Jump;
 			IDEX_NotEqual <= NotEqual;
-			IDEX_StoreSize <= StoreSize;
-			IDEX_LoadSize <= LoadSize;
+			IDEX_MemSize <= MemSize;
 			IDEX_LoadUns <= LoadUns;
-			IDEX_WritePCImm <= WritePCImm;
-			IDEX_IsLoad <= IsLoad;
+			IDEX_SubAB <= SubAB;
 		end
 	end
 
-	// Execution stage
 	wire signed[31:0] alu_b = IDEX_AluSrc ? IDEX_IMM : IDEX_B;
+	wire[31:0] alu_a = IDEX_PCImm ? IDEX_PC : IDEX_A;
 	wire zero;
 
-	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(IDEX_A), .r2(alu_b), .res(alu_res), .zero(zero));
+	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(alu_a), .r2(alu_b), .res(alu_res), .zero(zero));
+
+	wire signed[31:0] subAB = IDEX_A - IDEX_B;
 
 	always @(negedge clk) begin
 		EXMEM_invalid <= IDEX_invalid | MEMinvalid;
 
-		EXMEM_IMM <= IDEX_IMM;
-		EXMEM_PCIMM <= (IDEX_IMM < 0) ? IDEX_PC - (-(IDEX_IMM)) : IDEX_PC + (IDEX_IMM);
 		EXMEM_PC <= IDEX_PC;
-		EXMEM_MSB <= alu_res[31];
-		EXMEM_ZERO <= zero;
+		EXMEM_MSB <= IDEX_SubAB ? subAB[31] : alu_res[31];
+		EXMEM_ZERO <= IDEX_SubAB ? ~(|subAB) : zero;
 		EXMEM_ALURES <= alu_res;
-		EXMEM_IMM <= IDEX_IMM;
-		EXMEM_B <= IDEX_B;
+		EXMEM_OTHER <= IDEX_WriteMem ? IDEX_B : IDEX_IMM;
 		EXMEM_RD <= IDEX_RD;
 		EXMEM_LessThan <= IDEX_LessThan;
 		EXMEM_Equal <= IDEX_Equal;
@@ -262,81 +244,58 @@ module cpu(input clk,
 		EXMEM_WriteMem <= IDEX_WriteMem;
 		EXMEM_MemToReg <= IDEX_MemToReg;
 		EXMEM_PCtoReg <= IDEX_PCtoReg;
-		EXMEM_WriteUImm <= IDEX_WriteUImm;
-		EXMEM_PCImm <= IDEX_PCImm;
 		EXMEM_SetLessThan <= IDEX_SetLessThan;
 		EXMEM_Branch <= IDEX_Branch;
 		EXMEM_Jump <= IDEX_Jump;
 		EXMEM_NotEqual <= IDEX_NotEqual;
-		EXMEM_StoreSize <= IDEX_StoreSize;
-		EXMEM_LoadSize <= IDEX_LoadSize;
+		EXMEM_MemSize <= IDEX_MemSize;
 		EXMEM_LoadUns <= IDEX_LoadUns;
-		EXMEM_WritePCImm <= IDEX_WritePCImm;
-		EXMEM_IsLoad <= IDEX_IsLoad;
 	end
 
 	// Memory stage
+	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
 
-	wire[31:0] PC_ = EXMEM_PCImm ? EXMEM_PCIMM : EXMEM_ALURES;
-	assign new_PC = take_branch ? PC_ : PC + 4;
+	assign data_mem_in = EXMEM_OTHER;
+	assign data_mem_write_enable = EXMEM_WriteMem & ~EXMEM_invalid;
+	assign data_mem_read_enable = EXMEM_MemToReg & ~EXMEM_invalid;
+	assign d_addr = EXMEM_ALURES;
+	assign rw_data_size = EXMEM_MemSize;
 
 	always @(negedge clk)
-		if (EXMEM_LoadSize == 1)
-			if (EXMEM_LoadUns) begin
-				MEMWB_LOAD[7:0] <= d_mem_out[7:0];
-				MEMWB_LOAD[31:8] <= 0;
-			end
-			else begin
-				MEMWB_LOAD[7:0] <= d_mem_out[7:0];
-				MEMWB_LOAD[31:8] <= {24{d_mem_out[31]}};
-			end
-		else if (EXMEM_LoadSize == 2)
-			if (EXMEM_LoadUns) begin
-				MEMWB_LOAD[15:0] <= d_mem_out[15:0];
-				MEMWB_LOAD[31:16] <= 0;
-			end
-			else begin
-				MEMWB_LOAD[15:0] <= d_mem_out[15:0];
-				MEMWB_LOAD[31:16] <= {16{d_mem_out[31]}};
-			end
-		else if (EXMEM_LoadSize == 3)
-			MEMWB_LOAD <= d_mem_out;
+		if (EXMEM_MemSize == 1) begin
+			MEMWB_LOAD[7:0] <= data_mem_out[7:0];
+			MEMWB_LOAD[31:8] <= {24{EXMEM_LoadUns ^ data_mem_out[31]}};
+		end
+		else if (EXMEM_MemSize == 2) begin
+			MEMWB_LOAD[15:0] <= data_mem_out[15:0];
+			MEMWB_LOAD[31:16] <= {16{EXMEM_LoadUns ^ data_mem_out[31]}};
+		end
+		else if (EXMEM_MemSize == 3)
+			MEMWB_LOAD <= data_mem_out;
+		else
+			MEMWB_LOAD <= 'h0;
 
 	always @(negedge clk) begin
-		MEMWB_invalid <= EXMEM_invalid || WBinvalid;
+		MEMWB_invalid <= EXMEM_invalid | WBinvalid;
 
 		MEMWB_ALURES <= EXMEM_ALURES;
 		MEMWB_PC <= EXMEM_PC;
-		MEMWB_IMM <= EXMEM_IMM;
 		MEMWB_MSB <= EXMEM_MSB;
 		MEMWB_RD <= EXMEM_RD;
 		MEMWB_WriteReg <= EXMEM_WriteReg;
-		MEMWB_WriteMem <= EXMEM_WriteMem;
 		MEMWB_MemToReg <= EXMEM_MemToReg;
 		MEMWB_PCtoReg <= EXMEM_PCtoReg;
-		MEMWB_WriteUImm <= EXMEM_WriteUImm;
 		MEMWB_SetLessThan <= EXMEM_SetLessThan;
-		MEMWB_PCIMM <= EXMEM_PCIMM;
-		MEMWB_WritePCImm <= EXMEM_WritePCImm;
 	end
-
-	assign d_mem_in = EXMEM_B;
-	assign d_mem_wen = EXMEM_WriteMem && ~EXMEM_invalid;
-	assign d_addr = EXMEM_ALURES;
-	assign write_data_size = EXMEM_StoreSize | EXMEM_LoadSize;
 	
 	// Write back stage
-	assign write_data = (MEMWB_WritePCImm) ?
-						MEMWB_PCIMM :
-						(MEMWB_WriteUImm) ?
-							MEMWB_IMM :
-							(MEMWB_PCtoReg) ?
-								MEMWB_PC + 32'd4 : 
-								(MEMWB_SetLessThan) ? 
-									{30'b0, MEMWB_MSB} :
-									(MEMWB_MemToReg) ?
-										MEMWB_LOAD :
-										MEMWB_ALURES;
+	assign write_data = (MEMWB_PCtoReg) ?
+							MEMWB_PC + 32'd4 :
+							(MEMWB_SetLessThan) ?
+								{30'b0, MEMWB_MSB} :
+								(MEMWB_MemToReg) ?
+									MEMWB_LOAD :
+									MEMWB_ALURES;
 
 	hazard_Detection_Unit haz(
 					.clk(clk),
@@ -344,8 +303,8 @@ module cpu(input clk,
 					.took_branch(take_branch),
 					.MEM_invalid(EXMEM_invalid),
 					.EX_invalid(IDEX_invalid),
-					.is_load_EX(IDEX_IsLoad),
-					.is_load_MEM(EXMEM_IsLoad),
+					.is_load_EX(IDEX_MemToReg),
+					.is_load_MEM(EXMEM_MemToReg),
 					.rs1(rs1),
 					.rs2(rs2),
 					.rd(rd),
@@ -363,7 +322,6 @@ module cpu(input clk,
 
 endmodule
 
-// Sign extends the immediate value
 module imm_Gen(input clk,
 			   input[6:0] opcode,
 			   input[2:0] funct3,
@@ -371,48 +329,57 @@ module imm_Gen(input clk,
 			   input[31:0] instruction,
 			   output reg signed[31:0] imm_out);
 
-	always @(*)
-		if (opcode == 'b0010011 || opcode == 'b0000011 || opcode == 'b1100111) begin
-			// I type
-			imm_out[11:0] <= instruction[31:20];
-			imm_out[31:12] <= {20{instruction[31]}};
-		end
-		else if (opcode == 'b0100011) begin
-			// S type
-			imm_out[11:5] <= instruction[31:25];
-			imm_out[4:0] <= instruction[11:7];
-			imm_out[31:12] <= {20{instruction[31]}};
-		end
-		else if (opcode == 'b1100011) begin
-			// B type
-			imm_out[12] <= instruction[31];
-			imm_out[10:5] <= instruction[30:25];
-			imm_out[4:1] <= instruction[11:8];
-			imm_out[11] <= instruction[7];
-			imm_out[31:13] <= {19{instruction[31]}};
-			imm_out[0] <= 0;
-		end
-		else if (opcode == 'b0110111 || opcode == 'b0010111 /* auipc */) begin
-			// U type
-			imm_out[31:12] <= instruction[31:12];
-			imm_out[11:0] <= 0;
-		end
-		else if (opcode == 'b1101111) begin
-			// J type
-			imm_out[20] <= instruction[31];
-			imm_out[10:1] <= instruction[30:21];
-			imm_out[11] <= instruction[20];
-			imm_out[19:12] <= instruction[19:12];
-			imm_out[31:21] <= {11{instruction[31]}};
-			imm_out[0] <= 0;
-		end
-		else
-			imm_out <= 0;
+	always @(posedge clk)
+		case (opcode)
+			'b0010011: begin
+				imm_out[11:0] <= instruction[31:20];
+				imm_out[31:12] <= {20{instruction[31]}};
+			end
+			'b0000011: begin
+				imm_out[11:0] <= instruction[31:20];
+				imm_out[31:12] <= {20{instruction[31]}};
+			end
+			'b1100111: begin
+				imm_out[11:0] <= instruction[31:20];
+				imm_out[31:12] <= {20{instruction[31]}};
+			end
+			'b0100011: begin
+				imm_out[11:5] <= instruction[31:25];
+				imm_out[4:0] <= instruction[11:7];
+				imm_out[31:12] <= {20{instruction[31]}};
+			end
+			'b1100011: begin
+				imm_out[12] <= instruction[31];
+				imm_out[10:5] <= instruction[30:25];
+				imm_out[4:1] <= instruction[11:8];
+				imm_out[11] <= instruction[7];
+				imm_out[31:13] <= {19{instruction[31]}};
+				imm_out[0] <= 0;
+			end
+			'b0110111: begin
+				imm_out[31:12] <= instruction[31:12];
+				imm_out[11:0] <= 0;
+			end
+			'b0010111: begin
+				imm_out[31:12] <= instruction[31:12];
+				imm_out[11:0] <= 0;
+			end
+			'b1101111: begin
+				imm_out[20] <= instruction[31];
+				imm_out[10:1] <= instruction[30:21];
+				imm_out[11] <= instruction[20];
+				imm_out[19:12] <= instruction[19:12];
+				imm_out[31:21] <= {11{instruction[31]}};
+				imm_out[0] <= 0;
+			end
+			default:
+				imm_out <= 0;
+		endcase
 
 endmodule
 
 module uc(input clk,
-		  input[6:0] opcode,
+		  input[4:0] opcode,
 		  input[2:0] funct3,
 		  input[6:0] funct7,
 		  output reg Branch = 0,
@@ -425,18 +392,15 @@ module uc(input clk,
 		  output reg Equal = 0,
 		  output reg SetLessThan = 0,
 		  output reg PCtoReg = 0,
-		  output reg WriteUImm = 0,
 		  output reg PCImm = 0,
 	      output reg Jump = 0,
 		  output reg NotEqual = 0,
-		  output reg[1:0] StoreSize = 0,
-	      output reg[1:0] LoadSize = 0,
+	      output reg[1:0] MemSize = 0,
 		  output reg LoadUns = 0,
-		  output reg WritePCImm = 0,
-		  output reg IsLoad = 0);
+		  output reg SubAB = 0);
 
 	always @(*)
-		if (opcode == 'b0110011) begin
+		if (opcode == 'b01100) begin
 			// R type
 			Branch <= 0;
 			Jump <= 0;
@@ -445,16 +409,13 @@ module uc(input clk,
 			MemToReg <= 0;
 			WriteMem <= 0;
 			PCtoReg <= 0;
-			WriteUImm <= 0;
 			PCImm <= 0;
 			WriteReg <= 1;
 			AluSrc <= 0;
 			NotEqual <= 0;
-			StoreSize <= 0;
-			LoadSize <= 0;
+			MemSize <= 0;
 			LoadUns <= 0;
-			WritePCImm <= 0;
-			IsLoad <= 0;
+			SubAB = 0;
 
 			if (funct3 == 0 && funct7 == 0)
 				AluOp <= `ADD;
@@ -476,6 +437,7 @@ module uc(input clk,
 				AluOp <= `SUB;
 			else if (funct3 == 'h3 && funct7 == 0)
 				AluOp <= `SUBU;
+			`ifdef RV32M
 			else if (funct3 == 'b101 && funct7 == 'h0)
 				AluOp <= `DIVU;
 			else if (funct3 == 'h7 && funct7 <= 'h1)
@@ -484,6 +446,7 @@ module uc(input clk,
 				AluOp <= `REM;
 			else if (funct3 == 'h0 && funct7 == 'h1)
 				AluOp <= `MUL;
+			`endif
 			else
 				AluOp <= `NONE;
 
@@ -492,19 +455,17 @@ module uc(input clk,
 			else
 				SetLessThan <= 0;
 		end
-		else if (opcode == 'b0010011 || opcode == 'b0000011 || opcode == 'b1100111) begin
+		else if (opcode == 'b00100 || opcode == 'b00000 || opcode == 'b11001) begin
 			// I type
 			WriteMem <= 0;
 			Branch <= 0;
 			AluSrc <= 1;
-			WriteUImm <= 0;
 			LessThan <= 0;
 			NotEqual <= 0;
 			Equal <= 0;
-			StoreSize <= 0;
-			WritePCImm <= 0;
+			SubAB = 0;
 
-			if (opcode == 'b0000011) begin
+			if (opcode == 'b00000) begin
 				// load
 				MemToReg <= 1;
 				Jump <= 0;
@@ -513,23 +474,22 @@ module uc(input clk,
 				AluOp <= `ADD;
 				PCImm <= 0;
 				WriteReg <= 1;
-				IsLoad <= 1;
 
 				if (funct3 == 0)
-					LoadSize <= 1;
+					MemSize <= 1;
 				else if (funct3 == 1)
-					LoadSize <= 2;
+					MemSize <= 2;
 				else if (funct3 == 2)
-					LoadSize <= 3;
+					MemSize <= 3;
 				else
-					LoadSize <= 0;
+					MemSize <= 0;
 
 				if (funct3 == 4 || funct3 == 5)
 					LoadUns <= 1;
 				else
 					LoadUns <= 0;
 			end
-			else if (opcode == 'b1100111) begin
+			else if (opcode == 'b11001) begin
 				// jalr
 				Jump <= 1;
 				MemToReg <= 0;
@@ -538,11 +498,8 @@ module uc(input clk,
 				AluOp <= `ADD;
 				PCImm <= 0;
 				WriteReg <= 1;
-				LoadSize <= 0;
 				LoadUns <= 0;
-				StoreSize <= 0;
-				WritePCImm <= 0;
-				IsLoad <= 0;
+				MemSize <= 0;
 			end
 			else begin
 				Jump <= 0;
@@ -550,11 +507,8 @@ module uc(input clk,
 				PCtoReg <= 0;
 				PCImm <= 0;
 				WriteReg <= 1;
-				LoadSize <= 0;
-				StoreSize <= 0;
+				MemSize <= 0;
 				LoadUns <= 0;
-				WritePCImm <= 0;
-				IsLoad <= 0;
 
 				// Arithmetic operations
 				if (funct3 == 'h0)
@@ -584,7 +538,7 @@ module uc(input clk,
 					SetLessThan <= 0;
 			end
 		end
-		else if (opcode == 'b0100011) begin
+		else if (opcode == 'b01000) begin
 			// S type
 			Branch <= 0;
 			AluSrc <= 1;
@@ -594,29 +548,25 @@ module uc(input clk,
 			WriteReg <= 0;
 			SetLessThan <= 0;
 			PCtoReg <= 0;
-			WriteUImm <= 0;
 			PCImm <= 0;
 			Jump <= 0;
 			NotEqual <= 0;
 			LessThan <= 0;
 			Equal <= 0;
-			LoadSize <= 0;
 			LoadUns <= 0;
-			WritePCImm <= 0;
-			IsLoad <= 0;
+			SubAB = 0;
 
 			if (funct3 == 'h0)
-				StoreSize <= 1;
+				MemSize <= 1;
 			else if (funct3 == 'h1)
-				StoreSize <= 2;
+				MemSize <= 2;
 			else if (funct3 == 'h2)
-				StoreSize <= 3;
+				MemSize <= 3;
 			else
-				StoreSize <= 0;
+				MemSize <= 0;
 		end
-		else if (opcode == 'b1100011) begin
+		else if (opcode == 'b11000) begin
 			// B type
-			AluOp <= `SUB;
 			AluSrc <= 0;
 			MemToReg <= 0;
 			WriteMem <= 0;
@@ -625,13 +575,15 @@ module uc(input clk,
 			Branch <= 1;
 			Jump <= 0;
 			SetLessThan <= 0;
-			WriteUImm <= 0;
 			PCImm <= 1;
-			StoreSize <= 0;
-			LoadSize <= 0;
 			LoadUns <= 0;
-			WritePCImm <= 0;
-			IsLoad <= 0;
+			SubAB <= 1;
+			MemSize <= 0;
+
+			if (funct3 == 'h6 || funct3 == 'h7)
+				AluOp <= `SUBU;
+			else
+				AluOp <= `SUB;
 
 			if (funct3 == 0) begin
 				// eq
@@ -657,44 +609,53 @@ module uc(input clk,
 				Equal <= 0;
 				NotEqual <= 0;
 			end
+			else if (funct3 == 'h6) begin
+				// ltu
+				LessThan <= 1;
+				Equal <= 0;
+				NotEqual <= 0;
+			end
+			else if (funct3 == 'h7) begin
+				// geu
+				LessThan <= 0;
+				Equal <= 0;
+				NotEqual <= 0;
+			end
 			else begin
 				LessThan <= 0;
 				Equal <= 0;
 				NotEqual <= 0;
 			end
 		end
-		else if (opcode == 'b0110111 || opcode == 'b0010111) begin
+		else if (opcode == 'b01101 || opcode == 'b00101) begin
 			// U type
 			Branch <= 0;
 			LessThan <= 0;
 			Equal <= 0;
 			NotEqual <= 0;
-			AluSrc <= 0;
-			AluOp <= `NONE;
 			SetLessThan <= 0;
 			PCtoReg <= 0;
 			WriteReg <= 1;
 			WriteMem <= 0;
 			MemToReg <= 0;
-			StoreSize <= 0;
-			LoadSize <= 0;
+			MemSize <= 0;
 			LoadUns <= 0;
-			IsLoad <= 0;
+			SubAB = 0;
 
-			if (opcode == 'b0110111) begin // lui
-				WriteUImm <= 1;
+			if (opcode == 'b01101) begin // lui
+				AluOp <= `ADD;
 				PCImm <= 0;
-				WritePCImm <= 0;
 				Jump <= 0;
+				AluSrc <= 1;
 			end
 			else begin // auipc
-				WriteUImm <= 0;
+				AluOp <= `ADD;
 				PCImm <= 1;
-				WritePCImm <= 1;
 				Jump <= 1;
+				AluSrc <= 1;
 			end
 		end
-		else if (opcode == 'b1101111) begin
+		else if (opcode == 'b11011) begin
 			// J type
 			Branch <= 0;
 			Jump <= 1;
@@ -703,18 +664,15 @@ module uc(input clk,
 			NotEqual <= 0;
 			PCImm <= 1;
 			AluSrc <= 0;
-			AluOp <= `NONE;
+			AluOp <= `ADD;
 			SetLessThan <= 0;
 			PCtoReg <= 1;
 			WriteReg <= 1;
 			WriteMem <= 0;
-			WriteUImm <= 0;
 			MemToReg <= 0;
-			StoreSize <= 0;
-			LoadSize <= 0;
+			MemSize <= 0;
 			LoadUns <= 0;
-			WritePCImm <= 0;
-			IsLoad <= 0;
+			SubAB = 0;
 		end
 		else begin
 			Branch <= 0;
@@ -729,56 +687,10 @@ module uc(input clk,
 			PCtoReg <= 0;
 			WriteReg <= 0;
 			WriteMem <= 0;
-			WriteUImm <= 0;
 			MemToReg <= 0;
-			StoreSize <= 0;
-			LoadSize <= 0;
+			MemSize <= 0;
 			LoadUns <= 0;
-			WritePCImm <= 0;
-			IsLoad <= 0;
-		end
-
-endmodule
-
-module instruction_Decoder(input[31:0] instruction, input clk, output reg[4:0] rs1, output reg[4:0] rs2, output reg[4:0] rd);
-
-	wire[6:0] opcode = instruction[6:0];
-
-	always @(*)
-		if (opcode == 'b0110011) begin
-			rd <= instruction[11:7];
-			rs1 <= instruction[19:15];
-			rs2 <= instruction[24:20];
-		end
-		else if (opcode == 'b0010011 || opcode == 'b0000011 || opcode == 'b1100111) begin
-			rd <= instruction[11:7];
-			rs1 <= instruction[19:15];
-			rs2 <= 0;
-		end
-		else if (opcode == 'b0100011) begin
-			rs1 <= instruction[19:15];
-			rs2 <= instruction[24:20];
-			rd <= 0;
-		end
-		else if (opcode == 'b1100011) begin
-			rs1 <= instruction[19:15];
-			rs2 <= instruction[24:20];
-			rd <= 0;
-		end
-		else if (opcode == 'b0110111 || opcode == 'b0010111) begin
-			rd <= instruction[11:7];
-			rs1 <= instruction[19:15];
-			rs2 <= 0;
-		end
-		else if (opcode == 'b1101111) begin
-			rd <= instruction[11:7];
-			rs1 <= instruction[19:15];
-			rs2 <= 0;
-		end
-		else begin
-			rs1 <= 0;
-			rs2 <= 0;
-			rd <= 0;
+			SubAB = 0;
 		end
 
 endmodule

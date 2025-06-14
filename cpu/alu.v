@@ -45,7 +45,7 @@ module alu(
 			`DIVU:
 				res_ <= (r1 >= 0 ? r1 : -r1) / (r2 >= 0 ? r2 : -r2);
 			`REMU:
-				res_ <= (r1 >= 0 ? r1 : -r1) % (r2 >= 0 ? r2 : -r2);*/
+				res_ <= (r1 >= 0 ? r1 : -r1) % (r2 >= 0 ? r2 : -r2);
 			`endif
 			default:
 				res_ <= 0;
