@@ -16,17 +16,19 @@
 `define SUPERV 1
 `define USER 0
 
-module cpu(input clk,
-		   input reset,
-		   input[31:0] i_mem_out,
-		   output signed[31:0] data_mem_in,
-		   input signed[31:0] data_mem_out,
-		   output[1:0] w_data_size,
-		   output data_mem_write_enable,
-		   output data_mem_read_enable,
-		   output inst_mem_read_enable,
-		   output[31:0] addr,
-		   output[31:0] d_addr);
+module cpu(
+	input clk,
+	input reset,
+	input[31:0] i_mem_out,
+	output signed[31:0] data_mem_in,
+	input signed[31:0] data_mem_out,
+	output[1:0] w_data_size,
+	output data_mem_write_enable,
+	output data_mem_read_enable,
+	output inst_mem_read_enable,
+	output[31:0] addr,
+	output[31:0] d_addr
+	);
 
 	localparam XLEN = 32;
 
@@ -609,13 +611,14 @@ module cpu(input clk,
 	end
 	
 	// Write back stage
-	assign write_data = MEMWB_PCtoReg ?
-							MEMWB_PC :
-							MEMWB_SetLessThan ?
-								{31'b0, MEMWB_MSB} :
-								MEMWB_MemToReg ?
-									MEMWB_LOAD :
-									MEMWB_ALURES;
+	assign write_data =
+		MEMWB_PCtoReg ?
+			MEMWB_PC :
+			MEMWB_SetLessThan ?
+				{31'b0, MEMWB_MSB} :
+				MEMWB_MemToReg ?
+					MEMWB_LOAD :
+					MEMWB_ALURES;
 
 	wire state_reset = state == `RESET;
 	wire csr_write_mstatus = WriteCsrIDe && |rd && (funct12 == 'h300 || funct12 == 'h310);
@@ -655,12 +658,13 @@ module cpu(input clk,
 
 endmodule
 
-module imm_Gen(input clk,
-			   input[6:0] opcode,
-			   input[2:0] funct3,
-			   input[6:0] funct7,
-			   input[31:0] instruction,
-			   output reg signed[31:0] imm_out);
+module imm_Gen(
+	input clk,
+	input[6:0] opcode,
+	input[2:0] funct3,
+	input[6:0] funct7,
+	input[31:0] instruction,
+	output reg signed[31:0] imm_out);
 
 	always @(*)
 		case (opcode)
