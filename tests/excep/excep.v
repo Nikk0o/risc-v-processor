@@ -1,6 +1,6 @@
 module excep;
 
-	parameter mem_size = 26 * 4;
+	parameter mem_size = 33 * 4;
 
 	reg clk = 0;
 	integer loop_cnt = 0;

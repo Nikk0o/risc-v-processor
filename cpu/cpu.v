@@ -182,6 +182,10 @@ module cpu(input clk,
 	reg[3:0] EXMEM_excep_code = 0;
 	reg EXMEM_Ret = 0;
 
+	reg[31:0] EXMEM_csr_iwrite_data = 0;
+	reg[11:0] csr_iaddr_mem_w = 0;
+	reg EXMEM_csr_iwrite_enable = 0;
+
 	// Write back stage
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -217,19 +221,19 @@ module cpu(input clk,
 		IF_ignore <= IFinvalid || reset_internal;
 	end
 
-	wire IDinv = IF_invalid || state == `FLUSH_N_SAVE || reset_internal || IDinvalid || dont_ex_fst || IF_invalid;
+	wire IDinv = IF_invalid || reset_internal || IDinvalid || dont_ex_fst;
 	always @(negedge clk) begin
 		IFID_invalid <= IDinv;
 		IFID_ignore <= EXMEM_Ret || IF_ignore || IDinv;
 
-		IFID_PC <= stop_IF ? IFID_PC : PC;
-		IFID_IR <= stop_IF ? IFID_IR : i_mem_out;
+		IFID_PC <= stop_ID ? IFID_PC : PC;
+		IFID_IR <= stop_ID ? IFID_IR : i_mem_out;
 	end
 
 	wire[6:0] opcode = IFID_IR[6:0];
 	wire[2:0] funct3 = IFID_IR[14:12];
 	wire[6:0] funct7 = IFID_IR[31:25];
-	wire[11:0] csr_addr = IFID_IR[31:20];
+	wire[11:0] funct12 = IFID_IR[31:20];
 
 	wire[4:0] rs1 = (opcode == 'b0110111) || (opcode == 'b0010111 || opcode == 'b1101111) ? 'h0 : IFID_IR[19:15];
 	wire[4:0] rs2 = IFID_IR[24:20];
@@ -282,12 +286,14 @@ module cpu(input clk,
 	wire take_branch = ~EXMEM_ignore & (EXMEM_Jump | EXMEM_Branch & (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_MSB)));
 		wire any_branch = IDEX_Branch && ~IDEX_ignore || EXMEM_Branch && ~EXMEM_ignore || IDEX_Jump && ~IDEX_ignore || EXMEM_Jump && ~EXMEM_ignore;
 
-	imm_Gen immgen(.clk(clk),
-				   .instruction(IFID_IR),
-				   .opcode(opcode),
-				   .funct3(funct3),
-				   .funct7(funct7),
-				   .imm_out(imm));
+	imm_Gen immgen(
+		.clk(clk),
+		.instruction(IFID_IR),
+		.opcode(opcode),
+		.funct3(funct3),
+		.funct7(funct7),
+		.imm_out(imm)
+	);
 
 	wire wr = MEMWB_WriteReg && ~MEMWB_ignore;
 	wire atomic_write_enable = AtomicWriteReg && ~IFID_ignore && ~stop_ID;
@@ -312,7 +318,7 @@ module cpu(input clk,
 		.opcode(opcode),
 		.funct3(funct3),
 		.funct7(funct7),
-		.funct12(IFID_IR[31:20]),
+		.funct12(funct12),
 		.mode(mode),
 		.Branch(Branch),
 		.AluSrc(AluSrc),
@@ -388,41 +394,42 @@ module cpu(input clk,
 		.impl_read_enable({ReadCsrIDi, read_csr_ex, read_csr_mem, read_csr_wb}),
 		.impl_addrs_r({csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
 		.impl_csr(impl_csr),
-		.no_permission(no_perm)
+		.no_permission(no_perm),
+		.impl_write_data({32'd0, 32'd0, EXMEM_csr_iwrite_data, 32'd0}),
+		.impl_write_enable({1'b0, 1'b0, EXMEM_csr_iwrite_enable, 1'b0}),
+		.impl_addrs_w({12'd0, 12'd0, csr_iaddr_mem_w, 12'd0})
 	);
 
-	wire IDEXinv = AtomicWriteReg || state == `FLUSH_N_SAVE || reset_internal || IFID_invalid || EXinvalid;
+	wire IDEXinv = AtomicWriteReg || reset_internal || IFID_invalid || EXinvalid;
 	always @(negedge clk) begin
 		IDEX_invalid <= IDEXinv;
 		IDEX_ignore <= EXMEM_Ret || IFID_ignore || ID_raise_excep || IDEXinv || opcode[1:0] != 2'b11;
 
-		if (1'b1) begin
-			IDEX_A <= r1;
-			IDEX_B <= r2;
-			IDEX_RD <= rd;
-			IDEX_IMM <= imm;
-			IDEX_PC <= IFID_PC;
-			IDEX_AluSrc <= AluSrc;
-			IDEX_LessThan <= LessThan;
-			IDEX_Equal <= Equal;
-			IDEX_AluOp <= AluOp;
-			IDEX_WriteReg <= WriteReg;
-			IDEX_WriteMem <= WriteMem;
-			IDEX_MemToReg <= MemToReg;
-			IDEX_PCtoReg <= PCtoReg;
-			IDEX_PCImm <= PCImm;
-			IDEX_SetLessThan <= SetLessThan;
-			IDEX_Branch <= Branch;
-			IDEX_Jump <= Jump;
-			IDEX_NotEqual <= NotEqual;
-			IDEX_MemSize <= MemSize;
-			IDEX_LoadUns <= LoadUns;
-			IDEX_SubAB <= SubAB;
-			IDEX_SubABU <= SubABU;
-			IDEX_raise_excep <= ~EXMEM_Ret && ID_raise_excep && ~IDEXinv;
-			IDEX_excep_code <= ID_excep_code;
-			IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
-		end
+		IDEX_A <= r1;
+		IDEX_B <= r2;
+		IDEX_RD <= rd;
+		IDEX_IMM <= imm;
+		IDEX_PC <= IFID_PC;
+		IDEX_AluSrc <= AluSrc;
+		IDEX_LessThan <= LessThan;
+		IDEX_Equal <= Equal;
+		IDEX_AluOp <= AluOp;
+		IDEX_WriteReg <= WriteReg;
+		IDEX_WriteMem <= WriteMem;
+		IDEX_MemToReg <= MemToReg;
+		IDEX_PCtoReg <= PCtoReg;
+		IDEX_PCImm <= PCImm;
+		IDEX_SetLessThan <= SetLessThan;
+		IDEX_Branch <= Branch;
+		IDEX_Jump <= Jump;
+		IDEX_NotEqual <= NotEqual;
+		IDEX_MemSize <= MemSize;
+		IDEX_LoadUns <= LoadUns;
+		IDEX_SubAB <= SubAB;
+		IDEX_SubABU <= SubABU;
+		IDEX_raise_excep <= ~EXMEM_Ret && ID_raise_excep && ~IDEXinv;
+		IDEX_excep_code <= ID_excep_code;
+		IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
 	end
 
 	wire illegal_op;
@@ -444,7 +451,7 @@ module cpu(input clk,
 
 	wire signed[31:0] subAB = (IDEX_A >= 0 ? IDEX_A : SubABU ? -IDEX_A : IDEX_A) - (IDEX_B >= 0 ? IDEX_B : SubABU ? -IDEX_B : IDEX_B);
 
-	wire MEMinv = state == `FLUSH_N_SAVE || reset_internal || IDEX_invalid || MEMinvalid;
+	wire MEMinv = reset_internal || IDEX_invalid || MEMinvalid;
 	always @(negedge clk) begin
 		EXMEM_invalid <= MEMinv;
 		EXMEM_ignore <= EXMEM_Ret || IDEX_ignore || EX_raise_excep || MEMinv;
@@ -530,6 +537,13 @@ module cpu(input clk,
 	always @(*)
 		csr_iaddr_mem <= EXMEM_Ret ? 'h341 : MEM_raise_excep || EXMEM_raise_excep ? 'h305 : mode == `USER ? 'd300 : 'h310;
 
+
+	always @(*) begin
+		csr_iaddr_mem_w <= 'h341;
+		EXMEM_csr_iwrite_enable <= ~EXMEM_invalid && (any_excep);
+		EXMEM_csr_iwrite_data <= ~EXMEM_invalid && (any_excep) ? EXMEM_PC + 4 : 'd0;
+	end
+
 	always @(negedge clk)
 		if (mode == `USER && ~UBE || mode == `SUPERV && ~SBE || mode == `MACHINE && ~MBE)
 			if (EXMEM_MemSize == 1) begin
@@ -561,7 +575,7 @@ module cpu(input clk,
 		else
 			MEMWB_LOAD <= 0;
 
-	wire WBinv = state == `FLUSH_N_SAVE || reset_internal || EXMEM_invalid || WBinvalid;
+	wire WBinv = reset_internal || EXMEM_invalid || WBinvalid;
 	always @(negedge clk) begin
 		MEMWB_invalid <= WBinv;
 		MEMWB_ignore <= MEM_raise_excep || EXMEM_ignore || WBinv;
@@ -604,7 +618,7 @@ module cpu(input clk,
 									MEMWB_ALURES;
 
 	wire state_reset = state == `RESET;
-	wire csr_write_mstatus = WriteCsrIDe && |rd && (csr_addr == 'h300 || csr_addr == 'h310);
+	wire csr_write_mstatus = WriteCsrIDe && |rd && (funct12 == 'h300 || funct12 == 'h310);
 
 	assign any_excep = MEM_raise_excep || EXMEM_raise_excep;
 	hazard_Detection_Unit haz(

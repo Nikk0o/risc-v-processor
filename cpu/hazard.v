@@ -85,7 +85,7 @@ module hazard_Detection_Unit(
 			set_invalid_WB = 0;
 
 			if (took_branch) begin
-				set_invalid_IF <= 0;
+				set_invalid_IF <= 1;
 				set_invalid_ID <= 1;
 				set_invalid_EX <= 1;
 				set_invalid_MEM <= 1;

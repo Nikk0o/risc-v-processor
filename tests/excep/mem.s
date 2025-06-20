@@ -1,34 +1,52 @@
-	## Test system calls
+	## Test traps
 
-	la t0, handle_excep
-	la t1, start
-	csrrw t2, mtvec, t0
-	csrrw t2, mepc, t1
+	# Set endianness to big endian
+	li t0, 64
+	csrrw t1, mstatus, t0
+
+	csrrw zero, mstatus, zero # This should not execute
+
+	# Store mstatus
+	csrrs t1, mstatus, zero
+	sw t1, 0(zero)
+	la t0, start
+	csrrw t1, mepc, t0
+    la t0, handle_trap
+    csrrw t1, mtvec, t0
+
 	li t0, 0
 	li t1, 0
-	li t2, 0
+
 	mret
 
-	# Main program
-start:
-	li s0, 5
-	beq a0, s0, aua
-	addi a0, a0, 1
-	addi a1, a1, 1
-	ecall
-aua:
-	li t1, 1
-	sb t1, 0(a0)
-uaca:
-	# halt
-	j uaca
+handle_trap:
+	li a3, 0
+	bne a0, a3, check_big_e
 
-handle_excep:
-	sb a0, 0(a1)
-	csrrs a2, 0x310, zero
-	csrrs a3, mstatus, zero
-	xori a2, a2, 0x30
-	xori a3, a3, 64
-	csrrw a2, 0x310, a2
+	# Change endianess to little endian
+	li a3, 0
 	csrrw a3, mstatus, a3
 	mret
+
+check_big_e:
+	li a3, 1
+	bne a0, a3, return_handle
+
+	# Change endianness to big endian
+	li a3, 64
+	csrrw a3, mstatus, a3
+
+return_handle:
+	mret
+
+
+start:
+	li t0, 5000
+	li a0, 0
+	ecall
+	sw t0, 0(zero)
+	li a0, 1
+	ecall
+	sw t0, 4(zero)
+halt:
+	j halt

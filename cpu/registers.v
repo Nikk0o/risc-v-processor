@@ -57,11 +57,13 @@ module CSRs(
 	input[11:0] expl_addr_r,
 	input[47:0] impl_addrs_r,
 	input[11:0] expl_addr_w,
-	input[11:0] impl_addr_w,
+	input[47:0] impl_addrs_w,
 	input write_enable,
 	input expl_read_enable,
+	input[3:0] impl_write_enable,
 	input[3:0] impl_read_enable,
 	input[31:0] write_data,
+	input[127:0] impl_write_data,
 	input[1:0] mode,
 	output reg[31:0] expl_csr = 0,
 	output reg[127:0] impl_csr = 0,
@@ -128,7 +130,44 @@ module CSRs(
 						default:
 							impl_csr[32*(i + 1) - 1:32*i] <= 0;
 					endcase
+				else
+					impl_csr[32*(i + 1) - 1:32*i] <= 0;
 			end
+	endgenerate
+
+	// Implicit writes to CSRs
+	generate
+		for (i = 0; i < 4; i = i + 1)
+			always @(posedge clk)
+				if (impl_write_enable[i] && (~write_enable || expl_addr_w != impl_addrs_w[12*(i+1)-1:12*i]))
+					case(impl_addrs_w[12*(i+1)-1:12*i])
+						'h300:
+							mstatus <= impl_write_data[32*(i+1)-1:32*i];
+						'h301:
+							misa <= impl_write_data[32*(i+1)-1:32*i];
+						'h302:
+							medeleg <= impl_write_data[32*(i+1)-1:32*i];
+						'h303:
+							mideleg <= impl_write_data[32*(i+1)-1:32*i];
+						'h304:
+							mie <= impl_write_data[32*(i+1)-1:32*i];
+						'h305:
+							mtvec <= impl_write_data[32*(i+1)-1:32*i];
+						'h310:
+							mstatush <= impl_write_data[32*(i+1)-1:32*i];
+						'h312:
+							medelegh <= impl_write_data[32*(i+1)-1:32*i];
+						'h340:
+							mscratch <= impl_write_data[32*(i+1)-1:32*i];
+						'h341:
+							mepc <= impl_write_data[32*(i+1)-1:32*i];
+						'h342:
+							mcause <= impl_write_data[32*(i+1)-1:32*i];
+						'h343:
+							mtval <= impl_write_data[32*(i+1)-1:32*i];
+						'h344:
+							mip <= impl_write_data[32*(i+1)-1:32*i];
+					endcase
 	endgenerate
 
 	always @(posedge clk)
@@ -214,10 +253,13 @@ module CSRs(
 					endcase
 			end
 			`SUPERV: begin
+				expl_csr <= 0;
 			end
 			`USER: begin
+				expl_csr <= 0;
 			end
 			default: begin
+				expl_csr <= 0;
 			end
 		endcase
 	end
