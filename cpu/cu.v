@@ -72,6 +72,7 @@ module uc(
 				CsrSrc <= 0;
 				AtomicWriteReg <= 0;
 				WriteCsrIDe <= 1;
+				CsrOp <= 0;
 
 				// Ecall
 				if (funct12 == 0) begin
@@ -139,6 +140,7 @@ module uc(
 			AtomicWriteReg <= 0;
 			WriteCsrIDe <= 0;
 			Ret <= 0;
+			CsrOp <= 0;
 
 			if (!(opcode == 'b0110011
 				|| opcode == 'b0010011
@@ -185,6 +187,7 @@ module uc(
 			NotEqual <= 0;
 			LessThan <= 0;
 			SubAB <= 0;
+			SubABU <= 0;
 		end
 
 	always @(*)

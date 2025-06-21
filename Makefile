@@ -1,3 +1,6 @@
+cpu.check:
+	iverilog -s cpu cpu/*.v -o tmp/a.vvp -DRV32M=0
+
 fatorial.sim:
 	iverilog -s fatorial cpu/*.v tests/fatorial/fatorial.v -o tmp/a.vvp -DRV32M=0
 	vvp tmp/a.vvp

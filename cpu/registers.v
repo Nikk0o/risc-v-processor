@@ -1,3 +1,7 @@
+`define MACHINE 3
+`define SUPERV 1
+`define USER 0
+
 module registers(input clk,
 				 input reset,
 				 input[4:0] rs1,
@@ -251,6 +255,8 @@ module CSRs(
 						default:
 							expl_csr <= 0;
 					endcase
+				else
+					expl_csr <= 0;
 			end
 			`SUPERV: begin
 				expl_csr <= 0;

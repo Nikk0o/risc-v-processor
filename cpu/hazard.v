@@ -66,6 +66,7 @@ module hazard_Detection_Unit(
 			stop_ID = 0;
 			rs1_nz = 0;
 			rs2_nz = 0;
+			set_invalid_IF <= 0;
 			set_invalid_EX = 0;
 			set_invalid_MEM = 0;
 			set_invalid_WB = 0;

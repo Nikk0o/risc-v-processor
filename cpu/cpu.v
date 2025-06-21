@@ -45,29 +45,12 @@ module cpu(
 	wire stop_IF;
 
 	wire any_excep;
-	reg any_excep_r = 0;
-
-	always @(posedge clk)
-		any_excep_r <= any_excep;
-
-	wire Ret;
 	wire[3:0] highest_excep;
 
-	reg IF_raise_excep = 0;
-	reg IF_excep_code = 0;
-
-	reg ID_raise_excep = 0;
-	reg[3:0] ID_excep_code = 0;
-
-	reg EX_raise_excep = 0;
-	reg[3:0] EX_excep_code = 0;
-
-	reg MEM_raise_excep = 0;
-	reg[2:0] MEM_excep_code = 0;
-
-	reg WB_raise_excep = 0;
-	reg[2:0] WB_excep_code = 0;
-
+	/*
+	* Used to delay the mode change so that it only
+	* switches when the next instruction if fetched
+	*/
 	reg[1:0] next_mode = `MACHINE;
 	always @(negedge clk)
 		if (any_excep)
@@ -90,7 +73,15 @@ module cpu(
 		end
 	end
 
+	// just to avoid writing "state == `RESET" every time	
 	wire reset_internal = state == `RESET;
+
+	/*
+	* Don't execute the first instruction.
+	* Needed because both PC and MAR start at 0, so
+	* the first 2 clock cycles fetch the same instruction, and this
+	* prevents the cpu from executing the first.
+	*/
 	always @(negedge clk or posedge reset_internal)
 		if (reset_internal)
 			dont_ex_fst <= 1;
@@ -119,14 +110,22 @@ module cpu(
 
 	// Pipeline registers
 
+	// Fetch stage
 	reg IF_invalid = 0;
 	reg IF_ignore = 0;
+	wire IFinvalid;
+
+	reg IF_raise_excep = 0;
+	reg IF_excep_code = 0;
 
 	// Decoding stage
 	reg[31:0] IFID_PC = 0;
 	reg[31:0] IFID_IR = 0;
 	reg IFID_ignore = 0;
 	reg IFID_invalid = 0;
+
+	reg ID_raise_excep = 0;
+	reg[3:0] ID_excep_code = 0;
 
 	// Execution stage
 	reg signed[31:0] IDEX_A = 0;
@@ -157,6 +156,9 @@ module cpu(
 	reg IDEX_raise_excep = 0;
 	reg IDEX_Ret = 0;
 
+	reg EX_raise_excep = 0;
+	reg[3:0] EX_excep_code = 0;
+
 	// Memory access stage
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -182,6 +184,9 @@ module cpu(
 	reg[3:0] EXMEM_excep_code = 0;
 	reg EXMEM_Ret = 0;
 
+	reg MEM_raise_excep = 0;
+	reg[2:0] MEM_excep_code = 0;
+
 	reg[31:0] EXMEM_csr_iwrite_data = 0;
 	reg[11:0] csr_iaddr_mem_w = 0;
 	reg EXMEM_csr_iwrite_enable = 0;
@@ -199,12 +204,14 @@ module cpu(
 	reg MEMWB_invalid = 0;
 	reg MEMWB_ignore = 0;
 
+	reg WB_raise_excep = 0;
+	reg[2:0] WB_excep_code = 0;
+
 	reg[31:0] csr_iwrite_data_wb = 0;
 	reg[11:0] csr_iaddr_wb_w = 0;
 	reg csr_iwrite_enable_wb = 0;
 
-	wire IFinvalid;
-
+	// Forward
 	wire fw_EX_A;
 	wire fw_EX_B;
 	wire fw_MEM_A_L, fw_MEM_A;
@@ -274,6 +281,7 @@ module cpu(
 	wire[1:0] CsrOp;
 	wire RaiseExcep;
 	wire[3:0] ExcepCode;
+	wire Ret;
 
 	wire signed[31:0] alu_res;
 	wire signed[31:0] a, b;
@@ -386,14 +394,16 @@ module cpu(
 				csr_write_data <= 0;
 		endcase
 
+	wire csr_ewrite_enable = WriteCsrIDe && |rd && ~take_branch && ~IDEX_Branch && ~IDEX_Jump && ~stop_ID;
+	wire csr_eread_enable = ReadCsrIDe && |rd;
 	CSRs control_status_regs(
 		.clk(clk),
 		.mode(mode),
-		.write_enable(WriteCsrIDe && |rd && ~any_branch && ~stop_ID),
+		.write_enable(csr_ewrite_enable),
 		.expl_addr_w(csr_eaddr_id),
 		.expl_addr_r(csr_eaddr_id),
 		.write_data(csr_write_data),
-		.expl_read_enable(ReadCsrIDe && |rd),
+		.expl_read_enable(csr_eread_enable),
 		.expl_csr(expl_csr),
 		.impl_read_enable({ReadCsrIDi, read_csr_ex, read_csr_mem, read_csr_wb}),
 		.impl_addrs_r({csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
@@ -403,6 +413,8 @@ module cpu(
 		.impl_write_enable({1'b0, 1'b0, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
 		.impl_addrs_w({12'd0, 12'd0, csr_iaddr_mem_w, csr_iaddr_wb_w})
 	);
+
+	// Execution stage
 
 	wire IDEXinv = AtomicWriteReg || reset_internal || IFID_invalid || EXinvalid;
 	always @(negedge clk) begin
@@ -436,6 +448,12 @@ module cpu(
 		IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
 	end
 
+	always @(*) begin
+		EX_raise_excep <= 0;
+		EX_excep_code <= 0;
+		csr_iaddr_ex <= 0;
+	end
+
 	wire illegal_op;
 
 	wire signed[31:0] alu_b = IDEX_AluSrc ? IDEX_IMM : IDEX_B;
@@ -454,6 +472,8 @@ module cpu(
 	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(alu_a), .r2(alu_b), .res(alu_res), .zero(zero), .illegal_op(illegal_op));
 
 	wire signed[31:0] subAB = (IDEX_A >= 0 ? IDEX_A : SubABU ? -IDEX_A : IDEX_A) - (IDEX_B >= 0 ? IDEX_B : SubABU ? -IDEX_B : IDEX_B);
+
+	// Memory stage
 
 	wire MEMinv = reset_internal || IDEX_invalid || MEMinvalid;
 	always @(negedge clk) begin
@@ -483,13 +503,6 @@ module cpu(
 		EXMEM_Ret <= ~EXMEM_Ret && IDEX_Ret && ~MEMinv;
 	end
 
-	always @(*) begin
-		EX_raise_excep <= 0;
-		EX_excep_code <= 0;
-		csr_iaddr_ex <= 0;
-	end
-
-	// Memory stage
 	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
 
 	reg signed[31:0] write_data_mem;
@@ -532,14 +545,14 @@ module cpu(
 	assign w_data_size = EXMEM_MemSize;
 
 	always @(*)
-		read_csr_mem = (EXMEM_WriteMem || EXMEM_MemToReg || any_excep || EXMEM_Ret);
+		read_csr_mem <= ~EXMEM_invalid && (EXMEM_WriteMem || EXMEM_MemToReg || any_excep || EXMEM_Ret);
 
 	wire UBE = impl_csr[38];
 	wire SBE = impl_csr[36];
 	wire MBE = impl_csr[37];
 
 	always @(*)
-		csr_iaddr_mem <= EXMEM_Ret ? 'h341 : MEM_raise_excep || EXMEM_raise_excep ? 'h305 : mode == `USER ? 'd300 : 'h310;
+		csr_iaddr_mem <= EXMEM_Ret ? 'h341 : any_excep ? 'h305 : mode == `USER ? 'h300 : 'h310;
 
 
 	always @(*) begin
@@ -548,6 +561,10 @@ module cpu(
 		EXMEM_csr_iwrite_data <= ~EXMEM_invalid && (any_excep) ? EXMEM_PC + 4 : 'd0;
 	end
 
+	/*
+	* The memory module must always read a word regardless of
+	* the size of the data being read.
+	*/
 	always @(negedge clk)
 		if (mode == `USER && ~UBE || mode == `SUPERV && ~SBE || mode == `MACHINE && ~MBE)
 			if (EXMEM_MemSize == 1) begin
@@ -578,6 +595,8 @@ module cpu(
 				MEMWB_LOAD <= 0;
 		else
 			MEMWB_LOAD <= 0;
+
+	// Write back stage
 
 	wire WBinv = reset_internal || EXMEM_invalid || WBinvalid;
 	always @(negedge clk) begin
@@ -617,8 +636,7 @@ module cpu(
 		csr_iwrite_data_wb <= highest_excep;
 		csr_iwrite_enable_wb <= any_excep;
 	end
-	
-	// Write back stage
+
 	assign write_data =
 		MEMWB_PCtoReg ?
 			MEMWB_PC :
