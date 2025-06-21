@@ -1,4 +1,4 @@
-`include "cpu/defines.h"
+`include "cpu/defines.vh"
 
 module registers(input clk,
 				 input reset,
