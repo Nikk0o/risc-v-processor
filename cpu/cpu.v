@@ -1,20 +1,4 @@
-`include "cpu/aluops.vh"
-
-`define NONE 0
-
-`define RESET 0
-`define RUN 1
-`define FLUSH_N_SAVE 2
-`define RESUME 3
-`define HALT 4
-
-`define BYTE 1
-`define HALF 2
-`define WORD 3
-
-`define MACHINE 3
-`define SUPERV 1
-`define USER 0
+`include "cpu/defines.h"
 
 module cpu(
 	input clk,

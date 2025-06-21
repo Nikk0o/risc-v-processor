@@ -1,4 +1,4 @@
-`include "cpu/aluops.vh"
+`include "cpu/defines.h"
 
 module alu(
 	input clk,

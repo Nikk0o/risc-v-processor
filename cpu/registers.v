@@ -1,6 +1,4 @@
-`define MACHINE 3
-`define SUPERV 1
-`define USER 0
+`include "cpu/defines.h"
 
 module registers(input clk,
 				 input reset,

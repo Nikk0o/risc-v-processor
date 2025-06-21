@@ -1,8 +1,5 @@
-`include "cpu/aluops.vh"
+`include "cpu/defines.h"
 
-`define MACHINE 3
-`define SUPERV 1
-`define USER 0
 
 module uc(
 	input clk,
