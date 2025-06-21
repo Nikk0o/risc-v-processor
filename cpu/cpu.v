@@ -30,8 +30,6 @@ module cpu(
 	output[31:0] d_addr
 	);
 
-	localparam XLEN = 32;
-
 	reg[2:0] state = `RESET;
 	reg[1:0] mode = `MACHINE;
 
@@ -200,6 +198,10 @@ module cpu(
 	reg MEMWB_SetLessThan = 0;
 	reg MEMWB_invalid = 0;
 	reg MEMWB_ignore = 0;
+
+	reg[31:0] csr_iwrite_data_wb = 0;
+	reg[11:0] csr_iaddr_wb_w = 0;
+	reg csr_iwrite_enable_wb = 0;
 
 	wire IFinvalid;
 
@@ -397,9 +399,9 @@ module cpu(
 		.impl_addrs_r({csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
 		.impl_csr(impl_csr),
 		.no_permission(no_perm),
-		.impl_write_data({32'd0, 32'd0, EXMEM_csr_iwrite_data, 32'd0}),
-		.impl_write_enable({1'b0, 1'b0, EXMEM_csr_iwrite_enable, 1'b0}),
-		.impl_addrs_w({12'd0, 12'd0, csr_iaddr_mem_w, 12'd0})
+		.impl_write_data({32'd0, 32'd0, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
+		.impl_write_enable({1'b0, 1'b0, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
+		.impl_addrs_w({12'd0, 12'd0, csr_iaddr_mem_w, csr_iaddr_wb_w})
 	);
 
 	wire IDEXinv = AtomicWriteReg || reset_internal || IFID_invalid || EXinvalid;
@@ -608,6 +610,12 @@ module cpu(
 			read_csr_wb <= 0;
 			csr_iaddr_wb <= 0;
 		end
+	end
+
+	always @(*) begin
+		csr_iaddr_wb_w <= any_excep ? 'h342 : 'h000;
+		csr_iwrite_data_wb <= highest_excep;
+		csr_iwrite_enable_wb <= any_excep;
 	end
 	
 	// Write back stage
