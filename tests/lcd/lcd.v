@@ -26,8 +26,8 @@ module lcd
 			$finish;
 
 		$dumpvars(0, CPU, data_mem[260], data_mem[261]);
-		for (j = 0; j < 15; j = j + 1)
-			$dumpvars(data_mem[124 + j]);
+		for (j = 0; j < 12; j = j + 1)
+			$dumpvars(data_mem[132 + j]);
 	end
 	`endif
 

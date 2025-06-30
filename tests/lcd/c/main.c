@@ -2,7 +2,7 @@
 #include "lcd.h"
 
 int main(void) {
-	Display *d = (Display *) 124;
+	Display *d = (Display *) 132;
 	d->en_addr = (char *) 260;
 	d->cmm_addr = (char *) 261;
 

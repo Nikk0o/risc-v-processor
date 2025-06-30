@@ -1,3 +1,0 @@
-import System.IO
-
-main = readFile "inst_mem.hex" >>= putStrLn . show . (\) . length . words where sub a b = a - b
