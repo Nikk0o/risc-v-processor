@@ -21,3 +21,11 @@ exception.sim:
 
 exception.check:
 	iverilog -s excep cpu/*.v tests/excep/excep.v -o tmp/a.vvp -DRV32M=0
+
+lcd.sim:
+	iverilog -s lcd cpu/*.v tests/lcd/lcd.v -o tmp/a.vvp -DRV32M=0
+	vvp tmp/a.vvp
+	gtkwave tmp/a.vcd
+
+lcd.load:
+	yosys -p "verilog_defines -DYOSYS=0; read_verilog cpu/*.v tests/lcd/lcd.v; hierarchy -top lcd; synth_gowin -json tmp/lcd.json"

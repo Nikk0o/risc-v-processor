@@ -11,7 +11,10 @@ module cpu(
 	output data_mem_read_enable,
 	output inst_mem_read_enable,
 	output[31:0] addr,
-	output[31:0] d_addr
+	output[31:0] d_addr,
+
+	input minterrupt,
+	input sinterrupt
 	);
 
 	reg[2:0] state = `RESET;
@@ -29,7 +32,10 @@ module cpu(
 	wire stop_IF;
 
 	wire any_excep;
-	wire[3:0] highest_excep;
+	wire[5:0] highest_excep;
+	wire deleg;
+
+	reg EXMEM_Jalr = 0;
 
 	/*
 	* Used to delay the mode change so that it only
@@ -38,9 +44,9 @@ module cpu(
 	reg[1:0] next_mode = `MACHINE;
 	always @(negedge clk)
 		if (any_excep)
-			next_mode <= stop_IF || stop_ID ? next_mode : `MACHINE;
+			next_mode <= stop_IF || stop_ID ? next_mode : deleg ? `SUPERV : `MACHINE;
 		else if (EXMEM_Ret)
-			next_mode <= stop_IF || stop_ID ? next_mode : `USER;
+			next_mode <= stop_IF || stop_ID ? next_mode : mode == `MACHINE ? `SUPERV : `USER;
 
 	always @(negedge clk or posedge reset)
 		if (reset)
@@ -78,11 +84,13 @@ module cpu(
 			MAR <= 0;
 		end
 		else begin
-			PC <= stop_IF ? PC :
-				EXMEM_Ret || any_excep ?
+			PC <= EXMEM_Ret || any_excep ?
 					impl_csr[63:32]
-					: take_branch ?
-						new_PC - 4
+					: stop_IF ? PC
+						:take_branch ?
+							EXMEM_Jalr ? 
+							new_PC
+							: new_PC - 4
 						: new_PC;
 
 			MAR <= stop_IF ? MAR : EXMEM_Ret || any_excep ? impl_csr[63:32] - 4 : PC;
@@ -90,7 +98,6 @@ module cpu(
 	end
 
 	assign addr = MAR;
-
 
 	// Pipeline registers
 
@@ -110,6 +117,10 @@ module cpu(
 
 	reg ID_raise_excep = 0;
 	reg[3:0] ID_excep_code = 0;
+
+	reg csr_iwrite_enable_id = 0;
+	reg[31:0] csr_iwrite_data_id = 0;
+	reg[11:0] csr_iaddr_id_w = 0;
 
 	// Execution stage
 	reg signed[31:0] IDEX_A = 0;
@@ -139,9 +150,15 @@ module cpu(
 	reg[3:0] IDEX_excep_code = 0;
 	reg IDEX_raise_excep = 0;
 	reg IDEX_Ret = 0;
+	reg[31:0] IDEX_IBITS = 0;
+	reg IDEX_Jalr = 0;
 
 	reg EX_raise_excep = 0;
 	reg[3:0] EX_excep_code = 0;
+
+	reg [31:0] csr_iwrite_data_ex = 0;
+	reg csr_iwrite_enable_ex = 0;
+	reg[11:0] csr_iaddr_ex_w = 0;
 
 	// Memory access stage
 	reg[4:0] EXMEM_RD = 0;
@@ -167,6 +184,7 @@ module cpu(
 	reg EXMEM_raise_excep = 0;
 	reg[3:0] EXMEM_excep_code = 0;
 	reg EXMEM_Ret = 0;
+	reg[31:0] EXMEM_IBITS = 0;
 
 	reg MEM_raise_excep = 0;
 	reg[2:0] MEM_excep_code = 0;
@@ -266,6 +284,7 @@ module cpu(
 	wire RaiseExcep;
 	wire[3:0] ExcepCode;
 	wire Ret;
+	wire Jalr;
 
 	wire signed[31:0] alu_res;
 	wire signed[31:0] a, b;
@@ -292,7 +311,7 @@ module cpu(
 	);
 
 	wire wr = MEMWB_WriteReg && ~MEMWB_ignore;
-	wire atomic_write_enable = AtomicWriteReg && ~IFID_ignore && ~stop_ID;
+	wire atomic_write_enable = AtomicWriteReg && |rd && ~IFID_ignore && ~stop_ID;
 
 	registers regs(
 		.clk(clk),
@@ -341,7 +360,8 @@ module cpu(
 		.CsrOp(CsrOp),
 		.RaiseExcep(RaiseExcep),
 		.ExcepCode(ExcepCode),
-		.Ret(Ret)
+		.Ret(Ret),
+		.Jalr(Jalr)
 	);
 
 	always @(*) begin
@@ -361,8 +381,10 @@ module cpu(
 		csr_eaddr_id <= IFID_IR[31:20];
 
 	always @(*) begin
-		csr_iaddr_id <= RaiseExcep ? 'h305 : 'h000;
+		csr_iaddr_id <= any_excep ? highest_excep >= 32 ? 'h312 : 'h302 : 'h000;
 	end
+
+	assign deleg = impl_csr[96 + highest_excep[4:0]];
 
 	reg[31:0] csr_write_data = 0;
 
@@ -393,14 +415,14 @@ module cpu(
 		.impl_addrs_r({csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
 		.impl_csr(impl_csr),
 		.no_permission(no_perm),
-		.impl_write_data({32'd0, 32'd0, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
-		.impl_write_enable({1'b0, 1'b0, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
-		.impl_addrs_w({12'd0, 12'd0, csr_iaddr_mem_w, csr_iaddr_wb_w})
+		.impl_write_data({32'd0, csr_iwrite_data_ex, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
+		.impl_write_enable({1'b0, csr_iwrite_enable_ex, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
+		.impl_addrs_w({12'd0, csr_iaddr_ex_w, csr_iaddr_mem_w, csr_iaddr_wb_w})
 	);
 
 	// Execution stage
 
-	wire IDEXinv = AtomicWriteReg || reset_internal || IFID_invalid || EXinvalid;
+	wire IDEXinv = AtomicWriteReg && |rd || reset_internal || IFID_invalid || EXinvalid;
 	always @(negedge clk) begin
 		IDEX_invalid <= IDEXinv;
 		IDEX_ignore <= EXMEM_Ret || IFID_ignore || ID_raise_excep || IDEXinv || opcode[1:0] != 2'b11;
@@ -430,12 +452,30 @@ module cpu(
 		IDEX_raise_excep <= ~EXMEM_Ret && ID_raise_excep && ~IDEXinv;
 		IDEX_excep_code <= ID_excep_code;
 		IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
+		IDEX_IBITS <= IFID_IR;
+		IDEX_Jalr <= Jalr;
 	end
 
 	always @(*) begin
 		EX_raise_excep <= 0;
 		EX_excep_code <= 0;
-		csr_iaddr_ex <= 0;
+
+		if (any_excep) begin
+			if (highest_excep == 'h0)
+				csr_iwrite_data_ex <= IDEX_PC - 4;
+			else if (highest_excep == 'h2)
+				csr_iwrite_data_ex <= EXMEM_IBITS;
+			else
+				csr_iwrite_data_ex <= 0;
+
+			csr_iwrite_enable_ex <= 1;
+			csr_iaddr_ex_w <= deleg ? 'h143 : 'h343;
+		end
+		else begin
+			csr_iaddr_ex_w <= 0;
+			csr_iwrite_enable_ex <= 0;
+			csr_iwrite_data_ex <= 0;
+		end
 	end
 
 	wire illegal_op;
@@ -448,7 +488,9 @@ module cpu(
 		MEM_raise_excep ?
 			MEM_excep_code == 'd0 ?
 				MEM_excep_code
-				: EXMEM_excep_code
+				: EXMEM_raise_excep ?
+					EXMEM_excep_code
+					: MEM_excep_code
 			: EXMEM_raise_excep ?
 				EXMEM_excep_code
 				: 'd0;
@@ -485,6 +527,8 @@ module cpu(
 		EXMEM_raise_excep <= ~EXMEM_Ret && (IDEX_raise_excep || EX_raise_excep) && ~MEMinv;
 		EXMEM_excep_code <= IDEX_raise_excep ? IDEX_excep_code : EX_excep_code;
 		EXMEM_Ret <= ~EXMEM_Ret && IDEX_Ret && ~MEMinv;
+		EXMEM_IBITS <= IDEX_IBITS;
+		EXMEM_Jalr <= IDEX_Jalr;
 	end
 
 	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
@@ -536,7 +580,7 @@ module cpu(
 	wire MBE = impl_csr[37];
 
 	always @(*)
-		csr_iaddr_mem <= EXMEM_Ret ? 'h341 : any_excep ? 'h305 : mode == `USER ? 'h300 : 'h310;
+		csr_iaddr_mem <= EXMEM_Ret ? (mode == `MACHINE ? 'h341 : mode == `SUPERV ? 'h141 : 'h000) : any_excep ? 'h305 : mode == `USER ? 'h300 : 'h310;
 
 
 	always @(*) begin
@@ -553,11 +597,11 @@ module cpu(
 		if (mode == `USER && ~UBE || mode == `SUPERV && ~SBE || mode == `MACHINE && ~MBE)
 			if (EXMEM_MemSize == 1) begin
 				MEMWB_LOAD[7:0] <= data_mem_out[31:24];
-				MEMWB_LOAD[31:8] <= {24{EXMEM_LoadUns ^ data_mem_out[31]}};
+				MEMWB_LOAD[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 2) begin
 				MEMWB_LOAD[15:0] <= data_mem_out[31:16];
-				MEMWB_LOAD[31:16] <= {16{EXMEM_LoadUns ^ data_mem_out[31]}};
+				MEMWB_LOAD[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 3)
 				MEMWB_LOAD <= data_mem_out;
@@ -566,11 +610,11 @@ module cpu(
 		else if (mode == `USER && UBE || mode == `SUPERV && SBE || mode == `MACHINE && MBE)
 			if (EXMEM_MemSize == 1) begin
 				MEMWB_LOAD[7:0] <= data_mem_out[31:24];
-				MEMWB_LOAD[31:8] <= {24{EXMEM_LoadUns ^ data_mem_out[31]}};
+				MEMWB_LOAD[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 2) begin
 				MEMWB_LOAD[15:0] <= {data_mem_out[23:16], data_mem_out[31:24]};
-				MEMWB_LOAD[31:16] <= {16{EXMEM_LoadUns ^ data_mem_out[23]}};
+				MEMWB_LOAD[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[23]}};
 			end
 			else if (EXMEM_MemSize == 3) begin
 				MEMWB_LOAD <= {data_mem_out[7:0], data_mem_out[15:8], data_mem_out[23:16], data_mem_out[31:24]};
@@ -603,11 +647,11 @@ module cpu(
 
 		if (any_excep) begin
 			read_csr_wb <= 1;
-			csr_iaddr_wb <= 'h305;
+			csr_iaddr_wb <= deleg ? 'h105 : 'h305;
 		end
 		else if (EXMEM_Ret) begin
 			read_csr_wb <= 1;
-			csr_iaddr_wb <= 'h341;
+			csr_iaddr_wb <= mode == `MACHINE ? 'h341 : mode == `SUPERV ? 'h141 : 'h000;
 		end
 		else begin
 			read_csr_wb <= 0;
@@ -616,7 +660,7 @@ module cpu(
 	end
 
 	always @(*) begin
-		csr_iaddr_wb_w <= any_excep ? 'h342 : 'h000;
+		csr_iaddr_wb_w <= any_excep ? deleg ? 'h142 : 'h342 : 'h000;
 		csr_iwrite_data_wb <= highest_excep;
 		csr_iwrite_enable_wb <= any_excep;
 	end
@@ -663,7 +707,9 @@ module cpu(
 		.set_invalid_WB(WBinvalid),
 		.set_invalid_IF(IFinvalid),
 		.csr_write(AtomicWriteReg && |rd),
-		.is_branch_EX(IDEX_Jump || IDEX_Branch)
+		.is_branch_EX(IDEX_Jump || IDEX_Branch),
+		.EX_PC(IDEX_PC),
+		.ID_PC(IFID_PC)
 	);
 
 endmodule

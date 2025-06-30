@@ -34,6 +34,8 @@ module registers(input clk,
 							invalid_r[rd] <= 0;
 						end
 					end
+					else
+						regs[atomic_rd] <= atomic_write_data;
 
 					invalid_r[atomic_rd] <= 0;
 				end
@@ -92,7 +94,20 @@ module CSRs(
 
 	reg[31:0] mtime = 0, mtimecmp = 0;
 
+	reg[31:0] mimpid = 0;
+
 	// Add mcycle and minstret and mcounteren
+
+	// Supervisor registers
+	reg[31:0] sstatus = 0;
+	reg[31:0] sie = 0;
+	reg[31:0] stvec = 0;
+	reg[31:0] senvcfg = 0;
+	reg[31:0] sscratch = 0;
+	reg[31:0] sepc = 0;
+	reg[31:0] scause = 0;
+	reg[31:0] stval = 0;
+	reg[31:0] sip = 0;
 
 	wire right_mode = (write_enable || expl_read_enable) && expl_addr_w[9:8] <= mode;
 
@@ -103,6 +118,30 @@ module CSRs(
 			always @(*) begin
 				if (impl_read_enable[i])
 					case(impl_addrs_r[(i + 1)*12 - 1:i*12])
+						'h100:
+							impl_csr[32*(i+1)-1:32*i] <= sstatus;
+						'h104:
+							impl_csr[32*(i+1)-1:32*i] <= sie;
+						'h105:
+							impl_csr[32*(i+1)-1:32*i] <= stvec;
+						'h140:
+							impl_csr[32*(i+1)-1:32*i] <= sscratch;
+						'h141:
+							impl_csr[32*(i+1)-1:32*i] <= sepc;
+						'h142:
+							impl_csr[32*(i+1)-1:32*i] <= scause;
+						'h143:
+							impl_csr[32*(i+1)-1:32*i] <= stval;
+						'hf11:
+							impl_csr[32*(i+1)-1:32*i] <= mvendorid;
+						'hf12:
+							impl_csr[32*(i+1)-1:32*i] <= marchid;
+						'hf13:
+							impl_csr[32*(i+1)-1:32*i] <= mimpid;
+						'hf14:
+							impl_csr[32*(i+1)-1:32*i] <= mhartid;
+						'hf15:
+							impl_csr[32*(i+1)-1:32*i] <= mconfigptr;
 						'h300:
 							impl_csr[32*(i + 1) - 1:32*i] <= mstatus;
 						'h301:
@@ -143,6 +182,20 @@ module CSRs(
 			always @(posedge clk)
 				if (impl_write_enable[i] && (~write_enable || expl_addr_w != impl_addrs_w[12*(i+1)-1:12*i]))
 					case(impl_addrs_w[12*(i+1)-1:12*i])
+						'h100:
+							sstatus <= impl_write_data[32*(i+1)-1:32*i];
+						'h104:
+							sie <= impl_write_data[32*(i+1)-1:32*i];
+						'h105:
+							stvec <= impl_write_data[32*(i+1)-1:32*i];
+						'h140:
+							sscratch <= impl_write_data[32*(i+1)-1:32*i];
+						'h141:
+							sepc <= impl_write_data[32*(i+1)-1:32*i];
+						'h142:
+							scause <= impl_write_data[32*(i+1)-1:32*i];
+						'h143:
+							stval <= impl_write_data[32*(i+1)-1:32*i];
 						'h300:
 							mstatus <= impl_write_data[32*(i+1)-1:32*i];
 						'h301:
@@ -173,7 +226,7 @@ module CSRs(
 	endgenerate
 
 	always @(posedge clk)
-		no_permission <= mode < expl_addr_w[11:10] && (write_enable || expl_read_enable);
+		no_permission <= mode < expl_addr_w[11:10] && (write_enable || expl_read_enable) || write_enable && expl_addr_w >= 'hf11 && expl_addr_w <= 'hf15;
 
 	// Explicit writes to CSRs
 	always @(posedge clk) begin
@@ -224,6 +277,16 @@ module CSRs(
 			`MACHINE: begin
 				if (expl_read_enable)
 					case(expl_addr_r)
+						'hf11:
+							expl_csr <= mvendorid;
+						'hf12:
+							expl_csr <= marchid;
+						'hf13:
+							expl_csr <= mimpid;
+						'hf14:
+							expl_csr <= mhartid;
+						'hf15:
+							expl_csr <= mconfigptr;
 						'h300:
 							expl_csr<= mstatus;
 						'h301:

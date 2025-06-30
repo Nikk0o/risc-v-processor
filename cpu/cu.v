@@ -34,7 +34,8 @@ module uc(
 	output reg[1:0] CsrOp = 0,
 	output reg RaiseExcep = 0,
 	output reg[3:0] ExcepCode = 0,
-	output reg Ret = 0
+	output reg Ret = 0,
+	output reg Jalr = 0
 );
 
 	always @(*)
@@ -157,6 +158,12 @@ module uc(
 				ExcepCode <= 0;
 			end
 		end
+
+	always @(*)
+		if (opcode == 'b1100111)
+			Jalr <= 1;
+		else
+			Jalr <= 0;
 
 
 	// S type
