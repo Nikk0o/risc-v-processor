@@ -97,6 +97,12 @@ module hazard_Detection_Unit(
 				set_invalid_EX <= 1;
 				set_invalid_MEM <= 1;
 			end
+			else if (stop_ID) begin
+				set_invalid_IF <= 0;
+				set_invalid_ID <= 0;
+				set_invalid_EX <= 1;
+				set_invalid_MEM <= 0;
+			end
 			else begin
 				set_invalid_IF <= 0;
 				set_invalid_ID <= 0;

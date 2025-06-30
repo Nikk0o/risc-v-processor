@@ -6,7 +6,7 @@ module lcd
 	`endif
 	;
 
-	parameter inst_mem_size = 1288;
+	parameter inst_mem_size = 1304;
 
 	reg[10:0] lcd_command = 0;
 
@@ -26,8 +26,11 @@ module lcd
 			$finish;
 
 		$dumpvars(0, CPU, data_mem[260], data_mem[261]);
-		for (j = 0; j < 12; j = j + 1)
-			$dumpvars(data_mem[132 + j]);
+		for (j = 132; j < 132 + 12; j = j + 1)
+			$dumpvars(0, data_mem[j]);
+
+		for (j = 0; j < 32; j = j + 1)
+			$dumpvars(0, CPU.regs.regs[j]);
 	end
 	`endif
 

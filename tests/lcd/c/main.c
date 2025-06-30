@@ -7,5 +7,10 @@ int main(void) {
 	d->cmm_addr = (char *) 261;
 
 	invoke_ecall(1, (long) d, 8, 1, 1);
+	
+	volatile int i = 0;
+	while (i = 0) {
+	}
+
 	return 0;
 }

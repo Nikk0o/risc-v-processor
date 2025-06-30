@@ -31,7 +31,7 @@ void init_lcd(Display *d, char data_width, char lineno, char font) {
 
 	d->data_width = data_width;
 
-	_send_command(d, 0b00110000 + (data_width << 3) + (font << 2), 0b00);
+	_send_command(d, 0b00110000 + ((data_width == 8) << 3) + (font << 2), 0b00);
 	_send_command(d, 0b00001000, 0b00);
 	_send_command(d, 0b00000001, 0b00);
 	_send_command(d, 0b00000100, 0b00);
