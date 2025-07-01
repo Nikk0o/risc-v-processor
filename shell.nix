@@ -12,5 +12,8 @@ in
       cargo
       rustup
       rustc
+      yosys
+      nextpnr
+      openfpgaloader
     ];
   }

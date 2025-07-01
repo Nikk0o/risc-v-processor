@@ -1,5 +1,13 @@
 #include "lcd.h"
 
+unsigned long freq = 27000;
+
+static void sleep(unsigned long ms) {
+	volatile int c = 0;
+	while (c < ms * freq)
+		c += 1;
+}
+
 static void _toggle_lcd(Display *d) {
 	*(d->en_addr) |= 0b100;
 	*(d->en_addr) &= 0b011;
@@ -18,6 +26,9 @@ static void _send_command(Display *d, char cmm, char rsrw) {
 
 		_toggle_lcd(d);
 	}
+
+	if (cmm == 0b00000001 || cmm == 0b00000010)
+		sleep(4);
 }
 
 void init_lcd(Display *d, char data_width, char lineno, char font) {
@@ -42,4 +53,11 @@ void clear_screen(Display *d) {
 		return;
 
 	_send_command(d, 0b00000001, 0b00);
+}
+
+void set_ddram_address(Display *d, char cx, char cy) {
+	if (!d || cx > 16 || cy > 2 || cy < 0 || cx < 0)
+		return;
+
+	_send_command(d, 0b10000000 + (cy - 1 ? 0x40 + cx : cx));
 }

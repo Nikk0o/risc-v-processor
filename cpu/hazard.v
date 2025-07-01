@@ -55,6 +55,10 @@ module hazard_Detection_Unit(
 			|| is_load_EX && (forward_EX_A || forward_EX_B));
 	end
 
+	reg keep_invalid_ex;
+	always @(negedge clk)
+		keep_invalid_ex <= stop_ID;
+
 	always @(*) begin
 		if (reset) begin
 			forward_EX_A = 0;
@@ -96,6 +100,12 @@ module hazard_Detection_Unit(
 				set_invalid_ID <= 1;
 				set_invalid_EX <= 1;
 				set_invalid_MEM <= 1;
+			end
+			else if (stop_IF && ~stop_ID) begin
+				set_invalid_IF <= 0;
+				set_invalid_ID <= 1;
+				set_invalid_EX <= 0;
+				set_invalid_MEM <= 0;
 			end
 			else if (stop_ID) begin
 				set_invalid_IF <= 0;

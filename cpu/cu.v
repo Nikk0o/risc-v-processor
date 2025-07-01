@@ -35,7 +35,8 @@ module uc(
 	output reg RaiseExcep = 0,
 	output reg[3:0] ExcepCode = 0,
 	output reg Ret = 0,
-	output reg Jalr = 0
+	output reg Jalr = 0,
+	output reg[1:0] RetFrom = 0
 );
 
 	always @(*)
@@ -97,6 +98,8 @@ module uc(
 						ExcepCode <= 'd0;
 						Ret <= 1'b1;
 					end
+
+					RetFrom <= `MACHINE;
 				end
 				// uret
 				else if (funct12 == 'b000000000010) begin
@@ -110,6 +113,8 @@ module uc(
 						ExcepCode <= 'd0;
 						Ret <= 1'b1;
 					end
+
+					RetFrom <= `USER;
 				end
 				// sret
 				else if (funct12 == 'b000100000010) begin
@@ -123,11 +128,14 @@ module uc(
 						ExcepCode <= 'd0;
 						Ret <= 1'b1;
 					end
+
+					RetFrom <= `SUPERV;
 				end
 				else begin
 					RaiseExcep <= 0;
 					ExcepCode <= 0;
 					Ret <= 0;
+					RetFrom <= 0;
 				end
 			end
 		end
@@ -258,9 +266,9 @@ module uc(
 				PCImm <= 0;
 				WriteReg <= 1;
 
-				if (funct3 == 0)
+				if (funct3 == 0 || funct3 == 4)
 					MemSize <= 1;
-				else if (funct3 == 1)
+				else if (funct3 == 1 || funct3 == 5)
 					MemSize <= 2;
 				else if (funct3 == 2)
 					MemSize <= 3;

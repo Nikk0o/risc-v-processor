@@ -59,18 +59,18 @@ endmodule
 module CSRs(
 	input clk,
 	input[11:0] expl_addr_r,
-	input[47:0] impl_addrs_r,
+	input[59:0] impl_addrs_r,
 	input[11:0] expl_addr_w,
-	input[47:0] impl_addrs_w,
+	input[59:0] impl_addrs_w,
 	input write_enable,
 	input expl_read_enable,
-	input[3:0] impl_write_enable,
-	input[3:0] impl_read_enable,
+	input[4:0] impl_write_enable,
+	input[4:0] impl_read_enable,
 	input[31:0] write_data,
-	input[127:0] impl_write_data,
+	input[159:0] impl_write_data,
 	input[1:0] mode,
 	output reg[31:0] expl_csr = 0,
-	output reg[127:0] impl_csr = 0,
+	output reg[159:0] impl_csr = 0,
 	output reg no_permission = 0
 );
 

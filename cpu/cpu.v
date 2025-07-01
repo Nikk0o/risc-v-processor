@@ -37,6 +37,8 @@ module cpu(
 
 	reg EXMEM_Jalr = 0;
 
+	reg[1:0] xPP;
+
 	/*
 	* Used to delay the mode change so that it only
 	* switches when the next instruction if fetched
@@ -44,9 +46,9 @@ module cpu(
 	reg[1:0] next_mode = `MACHINE;
 	always @(negedge clk)
 		if (any_excep)
-			next_mode <= stop_IF || stop_ID ? next_mode : deleg ? `SUPERV : `MACHINE;
+			next_mode <= stop_IF || stop_ID ? next_mode : deleg && mode != `MACHINE ? `SUPERV : `MACHINE;
 		else if (EXMEM_Ret)
-			next_mode <= stop_IF || stop_ID ? next_mode : mode == `MACHINE ? `SUPERV : `USER;
+			next_mode <= stop_IF || stop_ID ? next_mode : xPP;
 
 	always @(negedge clk or posedge reset)
 		if (reset)
@@ -87,13 +89,13 @@ module cpu(
 			PC <= EXMEM_Ret || any_excep ?
 					impl_csr[63:32]
 					: stop_IF ? PC
-						:take_branch ?
+						: take_branch ?
 							EXMEM_Jalr ? 
-							new_PC
-							: new_PC - 4
-						: new_PC;
+								new_PC
+								: new_PC - 4
+							: new_PC;
 
-			MAR <= stop_IF ? MAR : EXMEM_Ret || any_excep ? impl_csr[63:32] - 4 : PC;
+			MAR <= stop_IF ? MAR : (EXMEM_Ret || any_excep) ? impl_csr[63:32] - 4 : PC;
 		end
 	end
 
@@ -108,6 +110,10 @@ module cpu(
 
 	reg IF_raise_excep = 0;
 	reg IF_excep_code = 0;
+
+	reg[11:0] csr_iaddr_if_w = 0;
+	reg[31:0] csr_iwrite_data_if = 0;
+	reg csr_iwrite_enable_if = 0;
 
 	// Decoding stage
 	reg[31:0] IFID_PC = 0;
@@ -152,6 +158,7 @@ module cpu(
 	reg IDEX_Ret = 0;
 	reg[31:0] IDEX_IBITS = 0;
 	reg IDEX_Jalr = 0;
+	reg[1:0] IDEX_RetFrom = 0;
 
 	reg EX_raise_excep = 0;
 	reg[3:0] EX_excep_code = 0;
@@ -185,6 +192,7 @@ module cpu(
 	reg[3:0] EXMEM_excep_code = 0;
 	reg EXMEM_Ret = 0;
 	reg[31:0] EXMEM_IBITS = 0;
+	reg[1:0] EXMEM_RetFrom = 0;
 
 	reg MEM_raise_excep = 0;
 	reg[2:0] MEM_excep_code = 0;
@@ -285,6 +293,7 @@ module cpu(
 	wire[3:0] ExcepCode;
 	wire Ret;
 	wire Jalr;
+	wire[1:0] RetFrom;
 
 	wire signed[31:0] alu_res;
 	wire signed[31:0] a, b;
@@ -292,7 +301,7 @@ module cpu(
 	wire signed[31:0] write_data;
 
 	wire[31:0] expl_csr;
-	wire[127:0] impl_csr;
+	wire[159:0] impl_csr;
 
 	wire signed[31:0] atomic_data = expl_csr;
 
@@ -361,7 +370,8 @@ module cpu(
 		.RaiseExcep(RaiseExcep),
 		.ExcepCode(ExcepCode),
 		.Ret(Ret),
-		.Jalr(Jalr)
+		.Jalr(Jalr),
+		.RetFrom(RetFrom)
 	);
 
 	always @(*) begin
@@ -369,13 +379,41 @@ module cpu(
 		ID_excep_code <= IFID_ignore ? 0 : RaiseExcep ? ExcepCode : 'b10;
 	end
 
-	wire signed[31:0] r1 = fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? data_mem_out : a;
-	wire signed[31:0] r2 = fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? data_mem_out : b;
+	reg[31:0] loaded_val = 0;
 
-	reg[11:0] csr_iaddr_id = 0, csr_iaddr_ex = 0, csr_iaddr_mem = 0, csr_iaddr_wb = 0;
-	reg read_csr_ex = 0, read_csr_mem = 0;
+	wire signed[31:0] r1 = fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? loaded_val : a;
+	wire signed[31:0] r2 = fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? loaded_val : b;
+
+	reg[11:0] csr_iaddr_if = 0, csr_iaddr_id = 0, csr_iaddr_ex = 0, csr_iaddr_mem = 0, csr_iaddr_wb = 0;
+	reg read_csr_ex = 0, read_csr_mem = 0, read_csr_if = 0;
 	reg read_csr_wb = 0;
 	reg[11:0] csr_eaddr_id = 0;
+
+	always @(*) begin
+		csr_iaddr_if <= any_excep ? 'h300 : 'h000;
+		read_csr_if <= any_excep;
+
+		csr_iaddr_if_w <= any_excep ? 'h300 : 'h000;
+		csr_iwrite_enable_if <= (mode != `MACHINE || deleg && mode < `SUPERV) && (any_excep || EXMEM_Ret);
+
+		csr_iwrite_data_if = impl_csr[159:128];
+		
+		if (EXMEM_Ret && EXMEM_RetFrom < mode) begin
+			if (impl_csr[128 + 12:128 + 11] != `USER) begin
+				csr_iwrite_data_if[12:11] <= `USER;
+
+				// make it move the value of sepc to mepc here
+			end
+			else
+				csr_iwrite_data_if <= csr_iwrite_data_if;
+		end
+		else if (deleg && mode == `USER)
+			csr_iwrite_data_if[8] <= mode[0];
+		else if (mode != `MACHINE)
+			csr_iwrite_data_if[12:11] <= mode;
+		else
+			csr_iwrite_data_if <= csr_iwrite_data_if;
+	end
 
 	always @(*)
 		csr_eaddr_id <= IFID_IR[31:20];
@@ -411,14 +449,17 @@ module cpu(
 		.write_data(csr_write_data),
 		.expl_read_enable(csr_eread_enable),
 		.expl_csr(expl_csr),
-		.impl_read_enable({ReadCsrIDi, read_csr_ex, read_csr_mem, read_csr_wb}),
-		.impl_addrs_r({csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
+		.impl_read_enable({read_csr_if, ReadCsrIDi, read_csr_ex, read_csr_mem, read_csr_wb}),
+		.impl_addrs_r({csr_iaddr_if, csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
 		.impl_csr(impl_csr),
 		.no_permission(no_perm),
-		.impl_write_data({32'd0, csr_iwrite_data_ex, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
-		.impl_write_enable({1'b0, csr_iwrite_enable_ex, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
-		.impl_addrs_w({12'd0, csr_iaddr_ex_w, csr_iaddr_mem_w, csr_iaddr_wb_w})
+		.impl_write_data({csr_iwrite_data_if, 32'd0, csr_iwrite_data_ex, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
+		.impl_write_enable({csr_iwrite_enable_if, 1'b0, csr_iwrite_enable_ex, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
+		.impl_addrs_w({csr_iaddr_if_w, 12'h000, csr_iaddr_ex_w, csr_iaddr_mem_w, csr_iaddr_wb_w})
 	);
+
+	always @(posedge clk)
+		xPP <= EXMEM_Ret ? mode == `MACHINE ? impl_csr[144:143] : mode == `SUPERV ? {1'b0, impl_csr[140]} : `USER : 0;
 
 	// Execution stage
 
@@ -454,6 +495,7 @@ module cpu(
 		IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
 		IDEX_IBITS <= IFID_IR;
 		IDEX_Jalr <= Jalr;
+		IDEX_RetFrom <= RetFrom;
 	end
 
 	always @(*) begin
@@ -529,6 +571,7 @@ module cpu(
 		EXMEM_Ret <= ~EXMEM_Ret && IDEX_Ret && ~MEMinv;
 		EXMEM_IBITS <= IDEX_IBITS;
 		EXMEM_Jalr <= IDEX_Jalr;
+		EXMEM_RetFrom <= IDEX_RetFrom;
 	end
 
 	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
@@ -593,36 +636,39 @@ module cpu(
 	* The memory module must always read a word regardless of
 	* the size of the data being read.
 	*/
-	always @(negedge clk)
+	always @(*)
 		if (mode == `USER && ~UBE || mode == `SUPERV && ~SBE || mode == `MACHINE && ~MBE)
 			if (EXMEM_MemSize == 1) begin
-				MEMWB_LOAD[7:0] <= data_mem_out[31:24];
-				MEMWB_LOAD[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
+				loaded_val[7:0] <= data_mem_out[31:24];
+				loaded_val[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 2) begin
-				MEMWB_LOAD[15:0] <= data_mem_out[31:16];
-				MEMWB_LOAD[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[31]}};
+				loaded_val[15:0] <= data_mem_out[31:16];
+				loaded_val[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 3)
-				MEMWB_LOAD <= data_mem_out;
+				loaded_val <= data_mem_out;
 			else
-				MEMWB_LOAD <= 0;
+				loaded_val <= 0;
 		else if (mode == `USER && UBE || mode == `SUPERV && SBE || mode == `MACHINE && MBE)
 			if (EXMEM_MemSize == 1) begin
-				MEMWB_LOAD[7:0] <= data_mem_out[31:24];
-				MEMWB_LOAD[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
+				loaded_val[7:0] <= data_mem_out[31:24];
+				loaded_val[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
 			end
 			else if (EXMEM_MemSize == 2) begin
-				MEMWB_LOAD[15:0] <= {data_mem_out[23:16], data_mem_out[31:24]};
-				MEMWB_LOAD[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[23]}};
+				loaded_val[15:0] <= {data_mem_out[23:16], data_mem_out[31:24]};
+				loaded_val[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[23]}};
 			end
 			else if (EXMEM_MemSize == 3) begin
-				MEMWB_LOAD <= {data_mem_out[7:0], data_mem_out[15:8], data_mem_out[23:16], data_mem_out[31:24]};
+				loaded_val <= {data_mem_out[7:0], data_mem_out[15:8], data_mem_out[23:16], data_mem_out[31:24]};
 			end
 			else
-				MEMWB_LOAD <= 0;
+				loaded_val <= 0;
 		else
-			MEMWB_LOAD <= 0;
+			loaded_val <= 0;
+
+	always @(negedge clk)
+		MEMWB_LOAD <= loaded_val;
 
 	// Write back stage
 

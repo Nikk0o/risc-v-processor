@@ -6,9 +6,7 @@ module lcd
 	`endif
 	;
 
-	parameter inst_mem_size = 1304;
-
-	reg[10:0] lcd_command = 0;
+	parameter inst_mem_size = 1472;
 
 	`ifndef YOSYS
 	reg clk = 0;
@@ -76,6 +74,7 @@ module lcd
 	);
 
 	`ifdef YOSYS
+		wire[10:0] lcd_command = {data_mem[260][2:0], data_mem[261]};
 		assign lcd_output = lcd_command;
 	`endif
 
