@@ -14,13 +14,9 @@ csr.sim:
 	vvp tmp/a.vvp
 	gtkwave tmp/a.vcd
 
-exception.sim:
-	iverilog -s excep cpu/*.v tests/excep/excep.v -o tmp/a.vvp -DRV32M=0
-	vvp tmp/a.vvp
+csr.sim:
+	yosys -p "read_verilog cpu/*.v tests/csr/csr.v; hierarchy -top csr; proc; sim -clock clk -n 500 -vcd tmp/a.vcd"
 	gtkwave tmp/a.vcd
-
-exception.check:
-	iverilog -s excep cpu/*.v tests/excep/excep.v -o tmp/a.vvp -DRV32M=0
 
 lcd.sim:
 	iverilog -s lcd cpu/*.v tests/lcd/lcd.v -o tmp/a.vvp
@@ -31,7 +27,7 @@ lcd.load:
 	yosys -p "verilog_defines -DYOSYS=0; read_verilog cpu/*.v tests/lcd/lcd.v; hierarchy -top lcd; synth_gowin -json tmp/lcd.json"
 	nextpnr-himbaechel --json tmp/lcd.json \
                    --write tmp/pnrlcd.json \
-                   --device GW1NR-LV9QN8PC6/I5 \
+                   --device GW1NR-LV9QN88PC6/I5 \
                    --vopt family=GW1N-9C \
                    --vopt cst=tests/lcd/lcd.cst
 	gowin_pack -d GW1N-9C -o tmp/pack.fs tmp/pnrlcd.json
@@ -41,3 +37,17 @@ vga.sim:
 	iverilog -s vga cpu/*.v tests/vga/vga.v -o tmp/a.vvp
 	vvp tmp/a.vvp
 	gtkwave tmp/a.vcd
+
+hdmi.sim:
+	yosys -p "read_verilog tests/hdmi/*.v cpu/*.v; hierarchy -top tb; proc; sim -clock clk -n 500 -vcd tmp/a.vcd"
+	gtkwave tmp/a.vcd
+
+hdmi.load:
+	yosys -p "read_verilog tests/hdmi/*.v; hierarchy -top hdmi; synth_gowin -json tmp/hdmi.json"
+	nextpnr-himbaechel --json tmp/hdmi.json \
+                   --write tmp/pnrhdmi.json \
+                   --device GW1NR-LV9QN88PC6/I5 \
+                   --vopt family=GW1N-9C \
+                   --vopt cst=tests/hdmi/hdmi.cst
+	gowin_pack -d GW1N-9C -o tmp/pack.fs tmp/pnrhdmi.json
+	openFPGALoader -b tangnano9k tmp/pack.fs

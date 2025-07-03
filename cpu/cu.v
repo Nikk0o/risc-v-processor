@@ -48,6 +48,7 @@ module uc(
 				WriteCsrIDe <= 1;
 				RaiseExcep <= 0;
 				ExcepCode <= 0;
+				RetFrom <= 0;
 
 				if (funct3 > 'b100)
 					CsrSrc <= 1;
@@ -85,6 +86,7 @@ module uc(
 						ExcepCode <= 'd11;
 
 					Ret <= 1'b0;
+					RetFrom <= 0;
 				end
 				// mret
 				else if (funct12 == 'b001100000010) begin
@@ -103,16 +105,9 @@ module uc(
 				end
 				// uret
 				else if (funct12 == 'b000000000010) begin
-					if (mode < `USER) begin
-						RaiseExcep <= 'b1;
-						ExcepCode <= 'b10;
-						Ret <= 1'b0;
-					end
-					else begin
-						RaiseExcep <= 0;
-						ExcepCode <= 'd0;
-						Ret <= 1'b1;
-					end
+					RaiseExcep <= 0;
+					ExcepCode <= 'd0;
+					Ret <= 1'b1;
 
 					RetFrom <= `USER;
 				end
@@ -147,6 +142,7 @@ module uc(
 			WriteCsrIDe <= 0;
 			Ret <= 0;
 			CsrOp <= 0;
+			RetFrom <= 0;
 
 			if (!(opcode == 'b0110011
 				|| opcode == 'b0010011

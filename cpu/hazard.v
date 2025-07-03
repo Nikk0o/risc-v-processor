@@ -67,7 +67,6 @@ module hazard_Detection_Unit(
 			forward_MEM_B = 0;
 			forward_MEM_A_L = 0;
 			forward_MEM_B_L = 0;
-			stop_ID = 0;
 			rs1_nz = 0;
 			rs2_nz = 0;
 			set_invalid_IF <= 0;

@@ -18,7 +18,21 @@ module vga
 	integer i;
 
 	`ifdef YOSYS
-		
+
+	wire pix_clk;
+
+	// generated with https://juj.github.io/gowin_fpga_code_generators/pll_calculator.html
+	rPLL #( // For GW1NR-9C C6/I5 (Tang Nano 9K proto dev board)
+		.FCLKIN("27"),
+		.IDIV_SEL(5), // -> PFD = 4.5 MHz (range: 3-400 MHz)
+		.FBDIV_SEL(6), // -> CLKOUT = 31.5 MHz (range: 3.125-600 MHz)
+		.ODIV_SEL(32) // -> VCO = 1008 MHz (range: 400-1200 MHz)
+		) vga_vlk_gen (.CLKOUTP(), .CLKOUTD(), .CLKOUTD3(), .RESET(1'b0), .RESET_P(1'b0), .CLKFB(1'b0), .FBDSEL(6'b0), .IDSEL(6'b0), .ODSEL(6'b0), .PSDA(4'b0), .DUTYDA(4'b0), .FDLY(4'b0),
+		.CLKIN(clk),
+		.CLKOUT(pix_clk),
+		.LOCK(clk_lock)
+	);
+	
 	`else
 		reg clk = 0;
 		integer loop_cnt = 0;
@@ -77,7 +91,7 @@ module vga
 			else if (memsize == 3)
 				{data_mem[d_addr], data_mem[d_addr + 1], data_mem[d_addr + 2], data_mem[d_addr + 3]} <= data_mem_in;
 
-			data_mem[1] <= {7'h0, cx >= 640 || cy >= 480};
+			data_mem[1] <= {7'h0, cy >= 480};
 	end
 
 	cpu CPU(

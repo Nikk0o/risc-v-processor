@@ -11,10 +11,7 @@ module cpu(
 	output data_mem_read_enable,
 	output inst_mem_read_enable,
 	output[31:0] addr,
-	output[31:0] d_addr,
-
-	input minterrupt,
-	input sinterrupt
+	output[31:0] d_addr
 	);
 
 	reg[2:0] state = `RESET;
@@ -37,7 +34,7 @@ module cpu(
 
 	reg EXMEM_Jalr = 0;
 
-	reg[1:0] xPP;
+	reg[1:0] xPP = `USER;
 
 	/*
 	* Used to delay the mode change so that it only
@@ -47,7 +44,7 @@ module cpu(
 	always @(negedge clk)
 		if (any_excep)
 			next_mode <= stop_IF || stop_ID ? next_mode : deleg && mode != `MACHINE ? `SUPERV : `MACHINE;
-		else if (EXMEM_Ret)
+		else if (EXMEM_Ret && EXMEM_RetFrom == mode)
 			next_mode <= stop_IF || stop_ID ? next_mode : xPP;
 
 	always @(negedge clk or posedge reset)
@@ -86,16 +83,18 @@ module cpu(
 			MAR <= 0;
 		end
 		else begin
-			PC <= EXMEM_Ret || any_excep ?
-					impl_csr[63:32]
-					: stop_IF ? PC
-						: take_branch ?
-							EXMEM_Jalr ? 
-								new_PC
-								: new_PC - 4
-							: new_PC;
+			PC <= EXMEM_Ret && mode == EXMEM_RetFrom ?
+					mepc
+					: any_excep ?
+						(deleg && mode < `MACHINE ? stvec + 4 : mtvec + 4)
+						: stop_IF ? PC
+							: take_branch ?
+								EXMEM_Jalr ? 
+									new_PC
+									: new_PC - 4
+								: new_PC;
 
-			MAR <= stop_IF ? MAR : (EXMEM_Ret || any_excep) ? impl_csr[63:32] - 4 : PC;
+			MAR <= stop_IF ? MAR : EXMEM_Ret && EXMEM_RetFrom == mode ? mepc - 4 : any_excep ? mtvec - 4 : PC;
 		end
 	end
 
@@ -111,10 +110,6 @@ module cpu(
 	reg IF_raise_excep = 0;
 	reg IF_excep_code = 0;
 
-	reg[11:0] csr_iaddr_if_w = 0;
-	reg[31:0] csr_iwrite_data_if = 0;
-	reg csr_iwrite_enable_if = 0;
-
 	// Decoding stage
 	reg[31:0] IFID_PC = 0;
 	reg[31:0] IFID_IR = 0;
@@ -123,10 +118,6 @@ module cpu(
 
 	reg ID_raise_excep = 0;
 	reg[3:0] ID_excep_code = 0;
-
-	reg csr_iwrite_enable_id = 0;
-	reg[31:0] csr_iwrite_data_id = 0;
-	reg[11:0] csr_iaddr_id_w = 0;
 
 	// Execution stage
 	reg signed[31:0] IDEX_A = 0;
@@ -163,10 +154,6 @@ module cpu(
 	reg EX_raise_excep = 0;
 	reg[3:0] EX_excep_code = 0;
 
-	reg [31:0] csr_iwrite_data_ex = 0;
-	reg csr_iwrite_enable_ex = 0;
-	reg[11:0] csr_iaddr_ex_w = 0;
-
 	// Memory access stage
 	reg[4:0] EXMEM_RD = 0;
 	reg[31:0] EXMEM_PC = 0;
@@ -197,10 +184,6 @@ module cpu(
 	reg MEM_raise_excep = 0;
 	reg[2:0] MEM_excep_code = 0;
 
-	reg[31:0] EXMEM_csr_iwrite_data = 0;
-	reg[11:0] csr_iaddr_mem_w = 0;
-	reg EXMEM_csr_iwrite_enable = 0;
-
 	// Write back stage
 	reg[4:0] MEMWB_RD = 0;
 	reg[31:0] MEMWB_PC = 0;
@@ -217,15 +200,27 @@ module cpu(
 	reg WB_raise_excep = 0;
 	reg[2:0] WB_excep_code = 0;
 
-	reg[31:0] csr_iwrite_data_wb = 0;
-	reg[11:0] csr_iaddr_wb_w = 0;
-	reg csr_iwrite_enable_wb = 0;
-
 	// Forward
 	wire fw_EX_A;
 	wire fw_EX_B;
 	wire fw_MEM_A_L, fw_MEM_A;
 	wire fw_MEM_B_L, fw_MEM_B;
+
+	// CSRs
+	reg[31:0] mstatus = 0, mstatush = 0;
+	reg[31:0] marchid = 0, mhartid = 0;
+	reg[31:0] misa = 0;
+	reg[31:0] mvendorid = 0;
+	reg[31:0] medeleg = 0, medelegh = 0, mideleg = 0;
+	reg[31:0] mir = 0, mip = 0, mie = 0;
+	reg[31:0] mscratch = 0;
+	reg[31:0] mepc = 0;
+	reg[31:0] mcause = 0, mtval = 0, mtvec = 0;
+
+	// supervisor CSRs
+	reg[31:0] stvec = 0;
+	reg[31:0] sval = 0;
+	reg[31:0] sepc = 0;
 
 	always @(posedge clk)
 		if (take_branch && new_PC % 4 != 0 && !stop_IF) begin
@@ -300,10 +295,7 @@ module cpu(
 	wire signed[31:0] imm;
 	wire signed[31:0] write_data;
 
-	wire[31:0] expl_csr;
-	wire[159:0] impl_csr;
-
-	wire signed[31:0] atomic_data = expl_csr;
+	wire signed[31:0] atomic_data = csr_eread_data;
 
 	wire no_perm;
 
@@ -384,82 +376,104 @@ module cpu(
 	wire signed[31:0] r1 = fw_EX_A ? alu_res : fw_MEM_A ? EXMEM_ALURES : fw_MEM_A_L ? loaded_val : a;
 	wire signed[31:0] r2 = fw_EX_B ? alu_res : fw_MEM_B ? EXMEM_ALURES : fw_MEM_B_L ? loaded_val : b;
 
-	reg[11:0] csr_iaddr_if = 0, csr_iaddr_id = 0, csr_iaddr_ex = 0, csr_iaddr_mem = 0, csr_iaddr_wb = 0;
-	reg read_csr_ex = 0, read_csr_mem = 0, read_csr_if = 0;
-	reg read_csr_wb = 0;
 	reg[11:0] csr_eaddr_id = 0;
+	reg[31:0] csr_ewrite_data = 0;
+	reg[31:0] csr_eread_data = 0;
 
-	always @(*) begin
-		csr_iaddr_if <= any_excep ? 'h300 : 'h000;
-		read_csr_if <= any_excep;
-
-		csr_iaddr_if_w <= any_excep ? 'h300 : 'h000;
-		csr_iwrite_enable_if <= (mode != `MACHINE || deleg && mode < `SUPERV) && (any_excep || EXMEM_Ret);
-
-		csr_iwrite_data_if = impl_csr[159:128];
-		
-		if (EXMEM_Ret && EXMEM_RetFrom < mode) begin
-			if (impl_csr[128 + 12:128 + 11] != `USER) begin
-				csr_iwrite_data_if[12:11] <= `USER;
-
-				// make it move the value of sepc to mepc here
-			end
-			else
-				csr_iwrite_data_if <= csr_iwrite_data_if;
-		end
-		else if (deleg && mode == `USER)
-			csr_iwrite_data_if[8] <= mode[0];
-		else if (mode != `MACHINE)
-			csr_iwrite_data_if[12:11] <= mode;
-		else
-			csr_iwrite_data_if <= csr_iwrite_data_if;
-	end
+	assign no_perm = csr_eaddr_id[11:10] > mode && (ReadCsrIDe || WriteCsrIDe);
 
 	always @(*)
 		csr_eaddr_id <= IFID_IR[31:20];
 
 	always @(*) begin
-		csr_iaddr_id <= any_excep ? highest_excep >= 32 ? 'h312 : 'h302 : 'h000;
+		if (ReadCsrIDe && !no_perm)
+			case(csr_eaddr_id)
+				'h300:
+					csr_eread_data <= mstatus;
+				'h301:
+					csr_eread_data <= misa;
+				'h302:
+					csr_eread_data <= medeleg;
+				'h303:
+					csr_eread_data <= mideleg;
+				'h304:
+					csr_eread_data <= mie;
+				'h305:
+					csr_eread_data <= mtvec;
+				'h310:
+					csr_eread_data <= mstatush;
+				'h312:
+					csr_eread_data <= medelegh;
+				'h340:
+					csr_eread_data <= mscratch;
+				'h341:
+					csr_eread_data <= mepc;
+				'h342:
+					csr_eread_data <= mcause;
+				'h343:
+					csr_eread_data <= mtval;
+				'h344:
+					csr_eread_data <= mip;
+				default:
+					csr_eread_data <= 0;
+			endcase
+		else
+			csr_eread_data <= 0;
 	end
 
-	assign deleg = impl_csr[96 + highest_excep[4:0]];
+	assign deleg = highest_excep >= 32 ? medelegh[highest_excep[4:0]] : medeleg[highest_excep[4:0]];
 
-	reg[31:0] csr_write_data = 0;
+	always @(posedge clk) begin
+		if (WriteCsrIDe && ~stop_ID) begin
+			if (CsrOp == 0)
+				csr_ewrite_data = CsrSrc ? imm : r1;
+			else if (CsrOp == 1)
+				csr_ewrite_data = (CsrSrc ? imm : r1) | csr_eread_data;
+			else if (CsrOp == 2)
+				csr_ewrite_data = ~(CsrSrc ? imm : r1) & csr_eread_data;
+			else
+				csr_ewrite_data = csr_eread_data;
+		end
 
-	always @(*)
-		case(CsrOp)
-			'b00:
-				csr_write_data <= CsrSrc ? imm : r1;
-			'b01:
-				csr_write_data <= expl_csr | (CsrSrc ? imm : r1);
-			'b10:
-				csr_write_data <= expl_csr & ~(CsrSrc ? imm : r1);
-			default:
-				csr_write_data <= 0;
-		endcase
+		if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h305)
+			mtvec <= csr_ewrite_data;
 
-	wire csr_ewrite_enable = WriteCsrIDe && |rd && ~take_branch && ~IDEX_Branch && ~IDEX_Jump && ~stop_ID;
-	wire csr_eread_enable = ReadCsrIDe && |rd;
-	CSRs control_status_regs(
-		.clk(clk),
-		.mode(mode),
-		.write_enable(csr_ewrite_enable),
-		.expl_addr_w(csr_eaddr_id),
-		.expl_addr_r(csr_eaddr_id),
-		.write_data(csr_write_data),
-		.expl_read_enable(csr_eread_enable),
-		.expl_csr(expl_csr),
-		.impl_read_enable({read_csr_if, ReadCsrIDi, read_csr_ex, read_csr_mem, read_csr_wb}),
-		.impl_addrs_r({csr_iaddr_if, csr_iaddr_id, csr_iaddr_ex, csr_iaddr_mem, csr_iaddr_wb}),
-		.impl_csr(impl_csr),
-		.no_permission(no_perm),
-		.impl_write_data({csr_iwrite_data_if, 32'd0, csr_iwrite_data_ex, EXMEM_csr_iwrite_data, csr_iwrite_data_wb}),
-		.impl_write_enable({csr_iwrite_enable_if, 1'b0, csr_iwrite_enable_ex, EXMEM_csr_iwrite_enable, csr_iwrite_enable_wb}),
-		.impl_addrs_w({csr_iaddr_if_w, 12'h000, csr_iaddr_ex_w, csr_iaddr_mem_w, csr_iaddr_wb_w})
-	);
+		mstatus = WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h300 ? csr_ewrite_data : mstatus;
+		misa <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : misa;
+		medeleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : medeleg;
+		mideleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h303 ? csr_ewrite_data : mideleg;
+		mie <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h304 ? csr_ewrite_data : mie;
+		mstatush <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h310 ? csr_ewrite_data : mstatush;
+		medelegh <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h312 ? csr_ewrite_data : medelegh;
+		mscratch <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h340 ? csr_ewrite_data : mscratch;
 
-	always @(posedge clk)
-		xPP <= EXMEM_Ret ? mode == `MACHINE ? impl_csr[144:143] : mode == `SUPERV ? {1'b0, impl_csr[140]} : `USER : 0;
+		if (any_excep)
+			mepc <= EXMEM_PC;
+		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h341 && ~no_perm)
+			mepc <= csr_ewrite_data;
+		else if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
+			mepc <= sepc;
+
+		if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
+			mstatus[12:11] <= {1'b0, mstatus[8]};
+
+		if (any_excep)
+			mcause <= highest_excep;
+		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h342 && ~no_perm)
+			mcause <= csr_ewrite_data;
+
+		if (any_excep)
+			mtval <= EXMEM_IBITS;
+		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h343 && ~no_perm)
+			mtval <= csr_ewrite_data;
+
+		mip <= WriteCsrIDe && ~stop_ID && csr_eaddr_id && ~no_perm == 'h344 ? csr_ewrite_data : mip;
+	end
+
+	always @(posedge clk) begin
+		if (EXMEM_Ret)
+			xPP <= mode == `MACHINE ? mstatus[12:11] : mode == `SUPERV ? mstatus[8] : `USER;
+	end
 
 	// Execution stage
 
@@ -501,23 +515,6 @@ module cpu(
 	always @(*) begin
 		EX_raise_excep <= 0;
 		EX_excep_code <= 0;
-
-		if (any_excep) begin
-			if (highest_excep == 'h0)
-				csr_iwrite_data_ex <= IDEX_PC - 4;
-			else if (highest_excep == 'h2)
-				csr_iwrite_data_ex <= EXMEM_IBITS;
-			else
-				csr_iwrite_data_ex <= 0;
-
-			csr_iwrite_enable_ex <= 1;
-			csr_iaddr_ex_w <= deleg ? 'h143 : 'h343;
-		end
-		else begin
-			csr_iaddr_ex_w <= 0;
-			csr_iwrite_enable_ex <= 0;
-			csr_iwrite_data_ex <= 0;
-		end
 	end
 
 	wire illegal_op;
@@ -576,6 +573,10 @@ module cpu(
 
 	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
 
+	wire UBE = mstatus[6];
+	wire SBE = mstatush[4];
+	wire MBE = mstatush[5];
+
 	reg signed[31:0] write_data_mem;
 	always @(*)
 		case(EXMEM_MemSize)
@@ -614,23 +615,6 @@ module cpu(
 	assign data_mem_read_enable = (~MEM_raise_excep & ~EXMEM_raise_excep) & EXMEM_MemToReg & ~EXMEM_ignore;
 	assign d_addr = EXMEM_ALURES;
 	assign w_data_size = EXMEM_MemSize;
-
-	always @(*)
-		read_csr_mem <= ~EXMEM_invalid && (EXMEM_WriteMem || EXMEM_MemToReg || any_excep || EXMEM_Ret);
-
-	wire UBE = impl_csr[38];
-	wire SBE = impl_csr[36];
-	wire MBE = impl_csr[37];
-
-	always @(*)
-		csr_iaddr_mem <= EXMEM_Ret ? (mode == `MACHINE ? 'h341 : mode == `SUPERV ? 'h141 : 'h000) : any_excep ? 'h305 : mode == `USER ? 'h300 : 'h310;
-
-
-	always @(*) begin
-		csr_iaddr_mem_w <= 'h341;
-		EXMEM_csr_iwrite_enable <= ~EXMEM_invalid && (any_excep);
-		EXMEM_csr_iwrite_data <= ~EXMEM_invalid && (any_excep) ? EXMEM_PC + 4 : 'd0;
-	end
 
 	/*
 	* The memory module must always read a word regardless of
@@ -690,25 +674,6 @@ module cpu(
 	always @(*) begin
 		WB_raise_excep <= 0;
 		WB_excep_code <= 0;
-
-		if (any_excep) begin
-			read_csr_wb <= 1;
-			csr_iaddr_wb <= deleg ? 'h105 : 'h305;
-		end
-		else if (EXMEM_Ret) begin
-			read_csr_wb <= 1;
-			csr_iaddr_wb <= mode == `MACHINE ? 'h341 : mode == `SUPERV ? 'h141 : 'h000;
-		end
-		else begin
-			read_csr_wb <= 0;
-			csr_iaddr_wb <= 0;
-		end
-	end
-
-	always @(*) begin
-		csr_iaddr_wb_w <= any_excep ? deleg ? 'h142 : 'h342 : 'h000;
-		csr_iwrite_data_wb <= highest_excep;
-		csr_iwrite_enable_wb <= any_excep;
 	end
 
 	assign write_data =
@@ -752,7 +717,7 @@ module cpu(
 		.set_invalid_MEM(MEMinvalid),
 		.set_invalid_WB(WBinvalid),
 		.set_invalid_IF(IFinvalid),
-		.csr_write(AtomicWriteReg && |rd),
+		.csr_write(AtomicWriteReg),
 		.is_branch_EX(IDEX_Jump || IDEX_Branch),
 		.EX_PC(IDEX_PC),
 		.ID_PC(IFID_PC)

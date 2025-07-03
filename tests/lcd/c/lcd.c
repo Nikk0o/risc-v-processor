@@ -59,5 +59,5 @@ void set_ddram_address(Display *d, char cx, char cy) {
 	if (!d || cx > 16 || cy > 2 || cy < 0 || cx < 0)
 		return;
 
-	_send_command(d, 0b10000000 + (cy - 1 ? 0x40 + cx : cx));
+	_send_command(d, 0b10000000 + (cy - 1 ? 0x40 + cx : cx), 0b00);
 }

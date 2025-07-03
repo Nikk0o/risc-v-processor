@@ -6,7 +6,7 @@ module lcd
 	`endif
 	;
 
-	parameter inst_mem_size = 1472;
+	parameter inst_mem_size = 1696;
 
 	`ifndef YOSYS
 	reg clk = 0;
