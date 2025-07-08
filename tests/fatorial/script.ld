@@ -1,6 +1,5 @@
 INPUT(main.o)
-ENTRY(init)
-STARTUP(init.o)
+STARTUP(start.o)
 
 OUTPUT("out.elf")
 

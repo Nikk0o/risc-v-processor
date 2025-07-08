@@ -1,6 +1,7 @@
 module hazard_Detection_Unit(
 	input clk,
 	input reset,
+	input go_to_next,
 	input EX_invalid,
 	input MEM_invalid,
 	input is_load_EX,
@@ -17,31 +18,31 @@ module hazard_Detection_Unit(
 	input[4:0] rs1,
 	input[4:0] rs2,
 	input[4:0] rd,
-	output reg forward_EX_A = 0,
-	output reg forward_EX_B = 0,
-	output reg forward_MEM_A_L = 0,
-	output reg forward_MEM_B_L = 0,
-	output reg forward_MEM_A = 0,
-	output reg forward_MEM_B = 0,
-	output reg set_invalid_IF = 0,
-	output reg set_invalid_ID = 0,
-	output reg set_invalid_EX = 0,
-	output reg set_invalid_MEM = 0,
-	output reg set_invalid_WB = 0,
-	output reg stop_IF = 0,
-	output reg stop_ID = 0
+	output reg forward_EX_A,
+	output reg forward_EX_B,
+	output reg forward_MEM_A_L,
+	output reg forward_MEM_B_L,
+	output reg forward_MEM_A,
+	output reg forward_MEM_B,
+	output reg set_invalid_IF,
+	output reg set_invalid_ID,
+	output reg set_invalid_EX,
+	output reg set_invalid_MEM,
+	output reg set_invalid_WB,
+	output reg stop_IF,
+	output reg stop_ID
 	);
 
-	reg[4:0] EX_rd   = 0;
-	reg[4:0] MEM_rd  = 0;
-	reg[4:0] WB_rd   = 0;
+	reg[4:0] EX_rd;
+	reg[4:0] MEM_rd;
+	reg[4:0] WB_rd;
 
-	reg rs1_nz = 0;
-	reg rs2_nz = 0;
+	reg rs1_nz;
+	reg rs2_nz;
 
 	always @(negedge clk) begin
-		EX_rd <= reset ? 0 : rd;
-		MEM_rd <= reset ? 0 : EX_rd;
+		EX_rd <= reset ? 0 : go_to_next ? rd : EX_rd;
+		MEM_rd <= reset ? 0 : go_to_next ? EX_rd : MEM_rd;
 	end
 
 	always @(posedge clk) begin
@@ -89,7 +90,7 @@ module hazard_Detection_Unit(
 			set_invalid_WB = 0;
 
 			if (took_branch) begin
-				set_invalid_IF <= 1;
+				set_invalid_IF <= 0;
 				set_invalid_ID <= 1;
 				set_invalid_EX <= 1;
 				set_invalid_MEM <= 1;

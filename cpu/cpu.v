@@ -3,27 +3,33 @@
 module cpu(
 	input clk,
 	input reset,
-	input[31:0] i_mem_out,
-	output signed[31:0] data_mem_in,
-	input signed[31:0] data_mem_out,
-	output[1:0] w_data_size,
-	output data_mem_write_enable,
-	output data_mem_read_enable,
-	output inst_mem_read_enable,
+	input[31:0] mem_out,
+	output reg[31:0] mem_in,
+	output[1:0] data_size,
+	output mem_write_enable,
+	output mem_read_enable,
 	output[31:0] addr,
-	output[31:0] d_addr
-	);
 
-	reg[2:0] state = `RESET;
+	input mem_ready
+);
+
+	parameter invert_endian = 1;
+
+	/* Stage and mem_byte are used for loading and storing memory, as well
+	 * as reading instructions.
+	 *
+	 * stage tells if the it is instruction (1) or data (0)
+	 */
+	reg stage;
+
+	reg[2:0] state;
 	reg[1:0] mode = `MACHINE;
 
-	reg[31:0] PC = 0;
-	reg[31:0] MAR = 0;
+	reg[31:0] PC;
+	reg[31:0] MAR;
 	wire[31:0] new_PC;
 
 	reg dont_ex_fst = 1;
-
-	assign inst_mem_read_enable = 1;
 
 	wire stop_ID;
 	wire stop_IF;
@@ -32,9 +38,9 @@ module cpu(
 	wire[5:0] highest_excep;
 	wire deleg;
 
-	reg EXMEM_Jalr = 0;
+	reg EXMEM_Jalr;
 
-	reg[1:0] xPP = `USER;
+	reg[1:0] xPP;
 
 	/*
 	* Used to delay the mode change so that it only
@@ -42,23 +48,23 @@ module cpu(
 	*/
 	reg[1:0] next_mode = `MACHINE;
 	always @(negedge clk)
-		if (any_excep)
+		if (any_excep && stage == 1 && mem_ready)
 			next_mode <= stop_IF || stop_ID ? next_mode : deleg && mode != `MACHINE ? `SUPERV : `MACHINE;
-		else if (EXMEM_Ret && EXMEM_RetFrom == mode)
+		else if (EXMEM_Ret && EXMEM_RetFrom == mode && stage == 1 && mem_ready)
 			next_mode <= stop_IF || stop_ID ? next_mode : xPP;
 
 	always @(negedge clk or posedge reset)
 		if (reset)
 			mode <= `MACHINE;
-		else
+		else if (stage == 1 && mem_ready)
 			mode <= next_mode;
 
 	always @(negedge clk or posedge reset) begin
 		if (reset)
 			state <= `RESET;
-		else if (state == `RESET)
+		else if (state == `RESET && stage == 1 && mem_ready)
 			state <= `RUN;
-		else if (state == `RUN) begin
+		else if (state == `RUN && stage == 1 && mem_ready) begin
 		end
 	end
 
@@ -71,10 +77,10 @@ module cpu(
 	* the first 2 clock cycles fetch the same instruction, and this
 	* prevents the cpu from executing the first.
 	*/
-	always @(negedge clk or posedge reset_internal)
+	always @(posedge clk or posedge reset_internal)
 		if (reset_internal)
 			dont_ex_fst <= 1;
-		else
+		else if (stage == 1)
 			dont_ex_fst <= 0;
 
 	always @(negedge clk) begin
@@ -82,123 +88,124 @@ module cpu(
 			PC <= 0;
 			MAR <= 0;
 		end
-		else begin
+		else if (stage == 0 && mem_ready) begin
 			PC <= EXMEM_Ret && mode == EXMEM_RetFrom ?
-					mepc
+					(mode == `MACHINE ? mepc : sepc) + 4
 					: any_excep ?
-						(deleg && mode < `MACHINE ? stvec + 4 : mtvec + 4)
-						: stop_IF ? PC
-							: take_branch ?
-								EXMEM_Jalr ? 
-									new_PC
-									: new_PC - 4
-								: new_PC;
+						(deleg && mode < `MACHINE ? stvec : mtvec) + 4
+						: stop_IF ?
+							PC
+							: new_PC;
 
-			MAR <= stop_IF ? MAR : EXMEM_Ret && EXMEM_RetFrom == mode ? mepc - 4 : any_excep ? mtvec - 4 : PC;
+			MAR <= stop_IF ? MAR : EXMEM_Ret && EXMEM_RetFrom == mode ? (mode == `MACHINE ? mepc : sepc) : any_excep ? (deleg && mode < `MACHINE ? stvec : mtvec) : PC;
 		end
 	end
 
-	assign addr = MAR;
+	always @(negedge clk)
+		if (reset)
+			stage <= 0;
+		else if ((mem_read_enable | mem_write_enable) & mem_ready || !(mem_read_enable | mem_write_enable))
+			stage <= ~stage;
 
 	// Pipeline registers
 
 	// Fetch stage
-	reg IF_invalid = 0;
-	reg IF_ignore = 0;
+	reg IF_invalid;
+	reg IF_ignore;
 	wire IFinvalid;
 
-	reg IF_raise_excep = 0;
-	reg IF_excep_code = 0;
+	reg IF_raise_excep;
+	reg IF_excep_code;
 
 	// Decoding stage
-	reg[31:0] IFID_PC = 0;
-	reg[31:0] IFID_IR = 0;
-	reg IFID_ignore = 0;
-	reg IFID_invalid = 0;
+	reg[31:0] IFID_PC;
+	reg[31:0] IFID_IR;
+	reg IFID_ignore;
+	reg IFID_invalid;
 
-	reg ID_raise_excep = 0;
-	reg[3:0] ID_excep_code = 0;
+	reg ID_raise_excep;
+	reg[3:0] ID_excep_code;
 
 	// Execution stage
-	reg signed[31:0] IDEX_A = 0;
-	reg signed[31:0] IDEX_B = 0;
-	reg[4:0] IDEX_RD = 0;
-	reg signed[31:0] IDEX_IMM = 0;
-	reg[31:0] IDEX_PC = 0;
-	reg IDEX_Branch = 0;
-	reg IDEX_AluSrc = 0;
-	reg IDEX_LessThan = 0;
-	reg IDEX_Equal = 0;
-	reg[4:0] IDEX_AluOp = 0;
-	reg IDEX_WriteReg = 0;
-	reg IDEX_WriteMem = 0;
-	reg IDEX_MemToReg = 0;
-	reg IDEX_PCtoReg = 0;
-	reg IDEX_PCImm = 0;
-	reg IDEX_SetLessThan = 0;
-	reg IDEX_Jump = 0;
-	reg IDEX_NotEqual = 0;
-	reg[1:0] IDEX_MemSize = 0;
-	reg IDEX_LoadUns = 0;
-	reg IDEX_ignore = 0;
-	reg IDEX_invalid = 0;
-	reg IDEX_SubAB = 0;
-	reg IDEX_SubABU = 0;
-	reg[3:0] IDEX_excep_code = 0;
-	reg IDEX_raise_excep = 0;
-	reg IDEX_Ret = 0;
-	reg[31:0] IDEX_IBITS = 0;
-	reg IDEX_Jalr = 0;
-	reg[1:0] IDEX_RetFrom = 0;
+	reg signed[31:0] IDEX_A;
+	reg signed[31:0] IDEX_B;
+	reg[4:0] IDEX_RD;
+	reg signed[31:0] IDEX_IMM;
+	reg[31:0] IDEX_PC;
+	reg IDEX_Branch;
+	reg IDEX_AluSrc;
+	reg IDEX_LessThan;
+	reg IDEX_Equal;
+	reg[4:0] IDEX_AluOp;
+	reg IDEX_WriteReg;
+	reg IDEX_WriteMem;
+	reg IDEX_MemToReg;
+	reg IDEX_PCtoReg;
+	reg IDEX_PCImm;
+	reg IDEX_SetLessThan;
+	reg IDEX_Jump;
+	reg IDEX_NotEqual;
+	reg[1:0] IDEX_MemSize;
+	reg IDEX_LoadUns;
+	reg IDEX_ignore;
+	reg IDEX_invalid;
+	reg IDEX_SubAB;
+	reg IDEX_SubABU;
+	reg[3:0] IDEX_excep_code;
+	reg IDEX_raise_excep;
+	reg IDEX_Ret;
+	reg[31:0] IDEX_IBITS;
+	reg IDEX_Jalr;
+	reg[1:0] IDEX_RetFrom;
 
-	reg EX_raise_excep = 0;
-	reg[3:0] EX_excep_code = 0;
+	reg EX_raise_excep;
+	reg[3:0] EX_excep_code;
 
 	// Memory access stage
-	reg[4:0] EXMEM_RD = 0;
-	reg[31:0] EXMEM_PC = 0;
-	reg EXMEM_MSB = 0;
-	reg EXMEM_ZERO = 0;
-	reg signed[31:0] EXMEM_OTHER = 0;
-	reg signed[31:0] EXMEM_ALURES = 0;
-	reg EXMEM_Branch = 0;
-	reg EXMEM_LessThan = 0;
-	reg EXMEM_Equal = 0;
-	reg EXMEM_WriteReg = 0;
-	reg EXMEM_WriteMem = 0;
-	reg EXMEM_MemToReg = 0;
-	reg EXMEM_PCtoReg = 0;
-	reg EXMEM_SetLessThan = 0;
-	reg EXMEM_Jump = 0;
-	reg EXMEM_NotEqual = 0;
-	reg[1:0] EXMEM_MemSize = 0;
-	reg EXMEM_LoadUns = 0;
-	reg EXMEM_ignore = 0;
-	reg EXMEM_invalid = 0;
-	reg EXMEM_raise_excep = 0;
-	reg[3:0] EXMEM_excep_code = 0;
-	reg EXMEM_Ret = 0;
-	reg[31:0] EXMEM_IBITS = 0;
-	reg[1:0] EXMEM_RetFrom = 0;
+	reg[4:0] EXMEM_RD;
+	reg[31:0] EXMEM_PC;
+	reg EXMEM_MSB;
+	reg EXMEM_ZERO;
+	reg signed[31:0] EXMEM_OTHER;
+	reg signed[31:0] EXMEM_ALURES;
+	reg EXMEM_Branch;
+	reg EXMEM_LessThan;
+	reg EXMEM_Equal;
+	reg EXMEM_WriteReg;
+	reg EXMEM_WriteMem;
+	reg EXMEM_MemToReg;
+	reg EXMEM_PCtoReg;
+	reg EXMEM_SetLessThan;
+	reg EXMEM_Jump;
+	reg EXMEM_NotEqual;
+	reg[1:0] EXMEM_MemSize;
+	reg EXMEM_LoadUns;
+	reg EXMEM_ignore;
+	reg EXMEM_invalid;
+	reg EXMEM_raise_excep;
+	reg[3:0] EXMEM_excep_code;
+	reg EXMEM_Ret;
+	reg[31:0] EXMEM_IBITS;
+	reg[1:0] EXMEM_RetFrom;
 
-	reg MEM_raise_excep = 0;
-	reg[2:0] MEM_excep_code = 0;
+	reg MEM_raise_excep;
+	reg[2:0] MEM_excep_code;
 
 	// Write back stage
-	reg[4:0] MEMWB_RD = 0;
-	reg[31:0] MEMWB_PC = 0;
-	reg signed[31:0] MEMWB_LOAD = 0;
-	reg signed[31:0] MEMWB_ALURES = 0;
-	reg MEMWB_MSB = 0;
-	reg MEMWB_WriteReg = 0;
-	reg MEMWB_MemToReg = 0;
-	reg MEMWB_PCtoReg = 0;
-	reg MEMWB_SetLessThan = 0;
-	reg MEMWB_invalid = 0;
-	reg MEMWB_ignore = 0;
+	reg[4:0] MEMWB_RD;
+	reg[31:0] MEMWB_PC;
+	reg signed[31:0] MEMWB_LOAD;
+	reg signed[31:0] MEMWB_ALURES;
+	reg MEMWB_MSB;
+	reg MEMWB_WriteReg;
+	reg MEMWB_MemToReg;
+	reg MEMWB_PCtoReg;
+	reg MEMWB_SetLessThan;
+	reg MEMWB_invalid;
+	reg MEMWB_ignore;
 
-	reg WB_raise_excep = 0;
-	reg[2:0] WB_excep_code = 0;
+	reg WB_raise_excep;
+	reg[2:0] WB_excep_code;
 
 	// Forward
 	wire fw_EX_A;
@@ -207,43 +214,51 @@ module cpu(
 	wire fw_MEM_B_L, fw_MEM_B;
 
 	// CSRs
-	reg[31:0] mstatus = 0, mstatush = 0;
-	reg[31:0] marchid = 0, mhartid = 0;
-	reg[31:0] misa = 0;
-	reg[31:0] mvendorid = 0;
-	reg[31:0] medeleg = 0, medelegh = 0, mideleg = 0;
-	reg[31:0] mir = 0, mip = 0, mie = 0;
-	reg[31:0] mscratch = 0;
-	reg[31:0] mepc = 0;
-	reg[31:0] mcause = 0, mtval = 0, mtvec = 0;
+	reg[31:0] mstatus, mstatush;
+	reg[31:0] marchid, mhartid;
+	reg[31:0] misa;
+	reg[31:0] mvendorid;
+	reg[31:0] medeleg, medelegh, mideleg;
+	reg[31:0] mir, mip, mie;
+	reg[31:0] mscratch;
+	reg[31:0] mepc;
+	reg[31:0] mcause, mtval, mtvec;
 
 	// supervisor CSRs
-	reg[31:0] stvec = 0;
-	reg[31:0] sval = 0;
-	reg[31:0] sepc = 0;
+	reg[31:0] stvec;
+	reg[31:0] sval;
+	reg[31:0] sepc;
+	reg[31:0] scause;
 
 	always @(posedge clk)
-		if (take_branch && new_PC % 4 != 0 && !stop_IF) begin
-			IF_raise_excep <= 1;
-			IF_excep_code <= 0;
-		end
-		else begin
-			IF_raise_excep <= 0;
-			IF_excep_code <= 0;
-		end
+		if (stage == 1 && mem_ready)
+			if (take_branch && new_PC[1:0] != 0 && !stop_IF) begin
+				IF_raise_excep <= 1;
+				IF_excep_code <= 0;
+			end
+			else begin
+				IF_raise_excep <= 0;
+				IF_excep_code <= 0;
+			end
 
 	always @(negedge clk) begin
-		IF_invalid <= reset_internal;
-		IF_ignore <= IFinvalid || reset_internal;
+		if (stage == 1)	begin
+			IF_invalid <= reset;
+			IF_ignore <= IFinvalid || reset;
+		end
 	end
 
-	wire IDinv = IF_invalid || reset_internal || IDinvalid || dont_ex_fst;
+	wire IDinv = IF_invalid || reset || IDinvalid || dont_ex_fst;
 	always @(negedge clk) begin
-		IFID_invalid <= IDinv;
-		IFID_ignore <= EXMEM_Ret || IF_ignore || IDinv;
+		if (stage == 1 & mem_ready) begin
+			IFID_invalid <= IDinv;
+			IFID_ignore <= EXMEM_Ret || IF_ignore || IDinv;
 
-		IFID_PC <= stop_ID ? IFID_PC : PC;
-		IFID_IR <= stop_ID ? IFID_IR : i_mem_out;
+			IFID_PC <= stop_ID ? IFID_PC : MAR;
+		end
+
+		if (stage == 1 && mem_ready)
+			IFID_IR <= mem_out;
 	end
 
 	wire[6:0] opcode = IFID_IR[6:0];
@@ -299,7 +314,7 @@ module cpu(
 
 	wire no_perm;
 
-	wire take_branch = ~EXMEM_ignore & (EXMEM_Jump | EXMEM_Branch & (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : (EXMEM_LessThan ? EXMEM_MSB : ~EXMEM_MSB)));
+	wire take_branch = ~EXMEM_ignore & (EXMEM_Jump | EXMEM_Branch & (EXMEM_NotEqual ? ~EXMEM_ZERO : EXMEM_Equal ? EXMEM_ZERO : EXMEM_LessThan & EXMEM_MSB));
 		wire any_branch = IDEX_Branch && ~IDEX_ignore || EXMEM_Branch && ~EXMEM_ignore || IDEX_Jump && ~IDEX_ignore || EXMEM_Jump && ~EXMEM_ignore;
 
 	imm_Gen immgen(
@@ -316,17 +331,17 @@ module cpu(
 
 	registers regs(
 		.clk(clk),
-	   .reset(reset),
-	   .rs1(rs1),
-	   .rs2(rs2),
-	   .r1(a),
-	   .r2(b),
-	   .atomic_rd(rd),
-	   .rd(MEMWB_RD),
-	   .atomic_write_data(atomic_data),
-	   .write_data(write_data),
-	   .write_enable(wr),
-	   .atomic_write_enable(atomic_write_enable)
+		.reset(reset),
+		.rs1(rs1),
+		.rs2(rs2),
+		.r1(a),
+		.r2(b),
+		.atomic_rd(rd),
+		.rd(MEMWB_RD),
+		.atomic_write_data(atomic_data),
+		.write_data(write_data),
+		.write_enable(wr && stage == 0),
+		.atomic_write_enable(atomic_write_enable && stage == 0)
 	);
 
 	uc control_unit(
@@ -424,54 +439,65 @@ module cpu(
 	assign deleg = highest_excep >= 32 ? medelegh[highest_excep[4:0]] : medeleg[highest_excep[4:0]];
 
 	always @(posedge clk) begin
-		if (WriteCsrIDe && ~stop_ID) begin
-			if (CsrOp == 0)
-				csr_ewrite_data = CsrSrc ? imm : r1;
-			else if (CsrOp == 1)
-				csr_ewrite_data = (CsrSrc ? imm : r1) | csr_eread_data;
-			else if (CsrOp == 2)
-				csr_ewrite_data = ~(CsrSrc ? imm : r1) & csr_eread_data;
-			else
-				csr_ewrite_data = csr_eread_data;
+		if (stage == 0) begin
+			if (WriteCsrIDe && ~stop_ID) begin
+				if (CsrOp == 0)
+					csr_ewrite_data = CsrSrc ? imm : r1;
+				else if (CsrOp == 1)
+					csr_ewrite_data = (CsrSrc ? imm : r1) | csr_eread_data;
+				else if (CsrOp == 2)
+					csr_ewrite_data = ~(CsrSrc ? imm : r1) & csr_eread_data;
+				else
+					csr_ewrite_data = csr_eread_data;
+			end
+
+			if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h305)
+				mtvec <= csr_ewrite_data;
+
+			mstatus = WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h300 ? csr_ewrite_data : mstatus;
+			misa <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : misa;
+			medeleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : medeleg;
+			mideleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h303 ? csr_ewrite_data : mideleg;
+			mie <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h304 ? csr_ewrite_data : mie;
+			mstatush <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h310 ? csr_ewrite_data : mstatush;
+			medelegh <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h312 ? csr_ewrite_data : medelegh;
+			mscratch <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h340 ? csr_ewrite_data : mscratch;
+
+			if (any_excep && ~(deleg && mode < `MACHINE))
+				mepc <= EXMEM_PC;
+			else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h341 && ~no_perm)
+				mepc <= csr_ewrite_data;
+			else if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
+				mepc <= sepc;
+
+			if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
+				mstatus[12:11] <= {1'b0, mstatus[8]};
+
+			if (any_excep && ~(deleg && mode < `MACHINE))
+				mcause <= highest_excep;
+			else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h342 && ~no_perm)
+				mcause <= csr_ewrite_data;
+
+			if (any_excep && ~(deleg && mode < `MACHINE))
+				mtval <= EXMEM_IBITS;
+			else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h343 && ~no_perm)
+				mtval <= csr_ewrite_data;
+
+			mip <= WriteCsrIDe && ~stop_ID && csr_eaddr_id && ~no_perm == 'h344 ? csr_ewrite_data : mip;
+
+			if (any_excep && deleg && mode < `MACHINE)
+				sepc <= EXMEM_PC;
+
+			if (any_excep && deleg && mode < `MACHINE)
+				scause <= highest_excep;
+
+			if (any_excep && deleg && mode < `MACHINE)
+				sval <= EXMEM_IBITS;
 		end
-
-		if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h305)
-			mtvec <= csr_ewrite_data;
-
-		mstatus = WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h300 ? csr_ewrite_data : mstatus;
-		misa <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : misa;
-		medeleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h302 ? csr_ewrite_data : medeleg;
-		mideleg <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h303 ? csr_ewrite_data : mideleg;
-		mie <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h304 ? csr_ewrite_data : mie;
-		mstatush <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h310 ? csr_ewrite_data : mstatush;
-		medelegh <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h312 ? csr_ewrite_data : medelegh;
-		mscratch <= WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h340 ? csr_ewrite_data : mscratch;
-
-		if (any_excep)
-			mepc <= EXMEM_PC;
-		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h341 && ~no_perm)
-			mepc <= csr_ewrite_data;
-		else if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
-			mepc <= sepc;
-
-		if (EXMEM_RetFrom == `SUPERV && mode == `MACHINE && mstatus[12:11] == `SUPERV)
-			mstatus[12:11] <= {1'b0, mstatus[8]};
-
-		if (any_excep)
-			mcause <= highest_excep;
-		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h342 && ~no_perm)
-			mcause <= csr_ewrite_data;
-
-		if (any_excep)
-			mtval <= EXMEM_IBITS;
-		else if (WriteCsrIDe && ~stop_ID && csr_eaddr_id == 'h343 && ~no_perm)
-			mtval <= csr_ewrite_data;
-
-		mip <= WriteCsrIDe && ~stop_ID && csr_eaddr_id && ~no_perm == 'h344 ? csr_ewrite_data : mip;
 	end
 
 	always @(posedge clk) begin
-		if (EXMEM_Ret)
+		if (EXMEM_Ret && stage == 0)
 			xPP <= mode == `MACHINE ? mstatus[12:11] : mode == `SUPERV ? mstatus[8] : `USER;
 	end
 
@@ -479,37 +505,39 @@ module cpu(
 
 	wire IDEXinv = AtomicWriteReg && |rd || reset_internal || IFID_invalid || EXinvalid;
 	always @(negedge clk) begin
-		IDEX_invalid <= IDEXinv;
-		IDEX_ignore <= EXMEM_Ret || IFID_ignore || ID_raise_excep || IDEXinv || opcode[1:0] != 2'b11;
+		if (stage == 1 && mem_ready) begin
+			IDEX_invalid <= IDEXinv;
+			IDEX_ignore <= EXMEM_Ret || IFID_ignore || ID_raise_excep || IDEXinv || opcode[1:0] != 2'b11;
 
-		IDEX_A <= r1;
-		IDEX_B <= r2;
-		IDEX_RD <= rd;
-		IDEX_IMM <= imm;
-		IDEX_PC <= IFID_PC;
-		IDEX_AluSrc <= AluSrc;
-		IDEX_LessThan <= LessThan;
-		IDEX_Equal <= Equal;
-		IDEX_AluOp <= AluOp;
-		IDEX_WriteReg <= WriteReg;
-		IDEX_WriteMem <= WriteMem;
-		IDEX_MemToReg <= MemToReg;
-		IDEX_PCtoReg <= PCtoReg;
-		IDEX_PCImm <= PCImm;
-		IDEX_SetLessThan <= SetLessThan;
-		IDEX_Branch <= Branch;
-		IDEX_Jump <= Jump;
-		IDEX_NotEqual <= NotEqual;
-		IDEX_MemSize <= MemSize;
-		IDEX_LoadUns <= LoadUns;
-		IDEX_SubAB <= SubAB;
-		IDEX_SubABU <= SubABU;
-		IDEX_raise_excep <= ~EXMEM_Ret && ID_raise_excep && ~IDEXinv;
-		IDEX_excep_code <= ID_excep_code;
-		IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
-		IDEX_IBITS <= IFID_IR;
-		IDEX_Jalr <= Jalr;
-		IDEX_RetFrom <= RetFrom;
+			IDEX_A <= r1;
+			IDEX_B <= r2;
+			IDEX_RD <= rd;
+			IDEX_IMM <= imm;
+			IDEX_PC <= IFID_PC;
+			IDEX_AluSrc <= AluSrc;
+			IDEX_LessThan <= LessThan;
+			IDEX_Equal <= Equal;
+			IDEX_AluOp <= AluOp;
+			IDEX_WriteReg <= WriteReg;
+			IDEX_WriteMem <= WriteMem;
+			IDEX_MemToReg <= MemToReg;
+			IDEX_PCtoReg <= PCtoReg;
+			IDEX_PCImm <= PCImm;
+			IDEX_SetLessThan <= SetLessThan;
+			IDEX_Branch <= Branch;
+			IDEX_Jump <= Jump;
+			IDEX_NotEqual <= NotEqual;
+			IDEX_MemSize <= MemSize;
+			IDEX_LoadUns <= LoadUns;
+			IDEX_SubAB <= SubAB;
+			IDEX_SubABU <= SubABU;
+			IDEX_raise_excep <= ~EXMEM_Ret && ID_raise_excep && ~IDEXinv;
+			IDEX_excep_code <= ID_excep_code;
+			IDEX_Ret <= ~EXMEM_Ret && Ret && ~IDEXinv;
+			IDEX_IBITS <= IFID_IR;
+			IDEX_Jalr <= Jalr;
+			IDEX_RetFrom <= RetFrom;
+		end
 	end
 
 	always @(*) begin
@@ -534,41 +562,43 @@ module cpu(
 				EXMEM_excep_code
 				: 'd0;
 
-	alu alu_(.clk(clk), .alu_op(IDEX_AluOp), .r1(alu_a), .r2(alu_b), .res(alu_res), .zero(zero), .illegal_op(illegal_op));
+	alu alu_(.clk(clk), .reset(reset), .alu_op(IDEX_AluOp), .r1(alu_a), .r2(alu_b), .res(alu_res), .zero(zero), .illegal_op(illegal_op));
 
-	wire signed[31:0] subAB = (IDEX_A >= 0 ? IDEX_A : SubABU ? -IDEX_A : IDEX_A) - (IDEX_B >= 0 ? IDEX_B : SubABU ? -IDEX_B : IDEX_B);
+	wire signed[31:0] subAB = (IDEX_A >= 0 ? IDEX_A : SubABU ? $unsigned(IDEX_A) : IDEX_A) - (IDEX_B >= 0 ? IDEX_B : SubABU ? $unsigned(IDEX_B) : IDEX_B);
 
 	// Memory stage
 
 	wire MEMinv = reset_internal || IDEX_invalid || MEMinvalid;
 	always @(negedge clk) begin
-		EXMEM_invalid <= MEMinv;
-		EXMEM_ignore <= EXMEM_Ret || IDEX_ignore || EX_raise_excep || MEMinv;
+		if (stage == 1 && mem_ready) begin
+			EXMEM_invalid <= MEMinv;
+			EXMEM_ignore <= EXMEM_Ret || IDEX_ignore || EX_raise_excep || MEMinv;
 
-		EXMEM_PC <= IDEX_PC;
-		EXMEM_MSB <= IDEX_SubAB ? subAB[31] : alu_res[31];
-		EXMEM_ZERO <= IDEX_SubAB ? ~(|subAB) : zero;
-		EXMEM_ALURES <= alu_res;
-		EXMEM_OTHER <= IDEX_WriteMem ? IDEX_B : IDEX_IMM;
-		EXMEM_RD <= AtomicWriteReg && IDEX_RD == rd ? 'd0 : IDEX_RD;
-		EXMEM_LessThan <= IDEX_LessThan;
-		EXMEM_Equal <= IDEX_Equal;
-		EXMEM_WriteReg <= IDEX_WriteReg;
-		EXMEM_WriteMem <= IDEX_WriteMem;
-		EXMEM_MemToReg <= IDEX_MemToReg;
-		EXMEM_PCtoReg <= IDEX_PCtoReg;
-		EXMEM_SetLessThan <= IDEX_SetLessThan;
-		EXMEM_Branch <= IDEX_Branch;
-		EXMEM_Jump <= IDEX_Jump;
-		EXMEM_NotEqual <= IDEX_NotEqual;
-		EXMEM_MemSize <= IDEX_MemSize;
-		EXMEM_LoadUns <= IDEX_LoadUns;
-		EXMEM_raise_excep <= ~EXMEM_Ret && (IDEX_raise_excep || EX_raise_excep) && ~MEMinv;
-		EXMEM_excep_code <= IDEX_raise_excep ? IDEX_excep_code : EX_excep_code;
-		EXMEM_Ret <= ~EXMEM_Ret && IDEX_Ret && ~MEMinv;
-		EXMEM_IBITS <= IDEX_IBITS;
-		EXMEM_Jalr <= IDEX_Jalr;
-		EXMEM_RetFrom <= IDEX_RetFrom;
+			EXMEM_PC <= IDEX_PC;
+			EXMEM_MSB <= IDEX_SubAB ? subAB[31] : alu_res[31];
+			EXMEM_ZERO <= IDEX_SubAB ? ~(|subAB) : zero;
+			EXMEM_ALURES <= alu_res;
+			EXMEM_OTHER <= IDEX_WriteMem ? IDEX_B : IDEX_IMM;
+			EXMEM_RD <= AtomicWriteReg && IDEX_RD == rd ? 'd0 : IDEX_RD;
+			EXMEM_LessThan <= IDEX_LessThan;
+			EXMEM_Equal <= IDEX_Equal;
+			EXMEM_WriteReg <= IDEX_WriteReg;
+			EXMEM_WriteMem <= IDEX_WriteMem;
+			EXMEM_MemToReg <= IDEX_MemToReg;
+			EXMEM_PCtoReg <= IDEX_PCtoReg;
+			EXMEM_SetLessThan <= IDEX_SetLessThan;
+			EXMEM_Branch <= IDEX_Branch;
+			EXMEM_Jump <= IDEX_Jump;
+			EXMEM_NotEqual <= IDEX_NotEqual;
+			EXMEM_MemSize <= IDEX_MemSize;
+			EXMEM_LoadUns <= IDEX_LoadUns;
+			EXMEM_raise_excep <= ~EXMEM_Ret && (IDEX_raise_excep || EX_raise_excep) && ~MEMinv;
+			EXMEM_excep_code <= IDEX_raise_excep ? IDEX_excep_code : EX_excep_code;
+			EXMEM_Ret <= ~EXMEM_Ret && IDEX_Ret && ~MEMinv;
+			EXMEM_IBITS <= IDEX_IBITS;
+			EXMEM_Jalr <= IDEX_Jalr;
+			EXMEM_RetFrom <= IDEX_RetFrom;
+		end
 	end
 
 	assign new_PC = take_branch ? EXMEM_ALURES : PC + 4;
@@ -610,65 +640,90 @@ module cpu(
 			MEM_excep_code <= 0;
 		end
 
-	assign data_mem_in = write_data_mem;
-	assign data_mem_write_enable = (~MEM_raise_excep & ~EXMEM_raise_excep) & EXMEM_WriteMem & ~EXMEM_ignore;
-	assign data_mem_read_enable = (~MEM_raise_excep & ~EXMEM_raise_excep) & EXMEM_MemToReg & ~EXMEM_ignore;
-	assign d_addr = EXMEM_ALURES;
-	assign w_data_size = EXMEM_MemSize;
+	assign mem_write_enable =
+		(~MEM_raise_excep & ~EXMEM_raise_excep) & EXMEM_WriteMem & ~EXMEM_ignore & ~stage;
+	assign mem_read_enable =
+		(~MEM_raise_excep & ~EXMEM_raise_excep) & EXMEM_MemToReg & ~EXMEM_ignore & ~stage | stage;
+	assign addr = stage == 0 ? EXMEM_ALURES : MAR;
+	assign data_size = stage == 0 ? EXMEM_MemSize : `WORD;
+
+	wire little_endian = mode == `MACHINE && ~MBE || mode == `SUPERV && ~SBE || mode == `USER && ~UBE;
+	wire big_endian = mode == `MACHINE && MBE || mode == `SUPERV && SBE || mode == `USER && UBE;
+
+	always @(*) begin
+		if (stage == 0) begin
+			if (little_endian ^ invert_endian)
+				case (EXMEM_MemSize)
+					'd1:
+						mem_in <= {EXMEM_OTHER[7:0], 24'd0};
+					'd2:
+						mem_in <= {EXMEM_OTHER[15:0], 16'd0};
+					'd3:
+						mem_in <= EXMEM_OTHER;
+					default:
+						mem_in <= 0;
+				endcase
+			else if (big_endian ^ invert_endian)
+				case (EXMEM_MemSize)
+					'd1:
+						mem_in <= {EXMEM_OTHER[7:0], 24'd0};
+					'd2:
+						mem_in <= {EXMEM_OTHER[7:0], EXMEM_OTHER[15:8], 16'd0};
+					'd3:
+						mem_in <= {EXMEM_OTHER[7:0], EXMEM_OTHER[15:8], EXMEM_OTHER[23:16], EXMEM_OTHER[31:24]};
+					default:
+						mem_in <= 0;
+				endcase
+			else
+				mem_in <= 0;
+		end
+		else
+			mem_in <= 0;
+	end
 
 	/*
 	* The memory module must always read a word regardless of
 	* the size of the data being read.
 	*/
-	always @(*)
-		if (mode == `USER && ~UBE || mode == `SUPERV && ~SBE || mode == `MACHINE && ~MBE)
-			if (EXMEM_MemSize == 1) begin
-				loaded_val[7:0] <= data_mem_out[31:24];
-				loaded_val[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
-			end
-			else if (EXMEM_MemSize == 2) begin
-				loaded_val[15:0] <= data_mem_out[31:16];
-				loaded_val[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[31]}};
-			end
-			else if (EXMEM_MemSize == 3)
-				loaded_val <= data_mem_out;
-			else
-				loaded_val <= 0;
-		else if (mode == `USER && UBE || mode == `SUPERV && SBE || mode == `MACHINE && MBE)
-			if (EXMEM_MemSize == 1) begin
-				loaded_val[7:0] <= data_mem_out[31:24];
-				loaded_val[31:8] <= {24{!EXMEM_LoadUns && data_mem_out[31]}};
-			end
-			else if (EXMEM_MemSize == 2) begin
-				loaded_val[15:0] <= {data_mem_out[23:16], data_mem_out[31:24]};
-				loaded_val[31:16] <= {16{!EXMEM_LoadUns && data_mem_out[23]}};
-			end
-			else if (EXMEM_MemSize == 3) begin
-				loaded_val <= {data_mem_out[7:0], data_mem_out[15:8], data_mem_out[23:16], data_mem_out[31:24]};
-			end
-			else
-				loaded_val <= 0;
-		else
-			loaded_val <= 0;
-
 	always @(negedge clk)
-		MEMWB_LOAD <= loaded_val;
+		if (stage == 0 && mem_ready)
+			if (little_endian ^ invert_endian)
+				case(EXMEM_MemSize)
+					'd1:
+						loaded_val <= {{24{!EXMEM_LoadUns & mem_out[31]}}, mem_out[31:24]};
+					'd2:
+						loaded_val <= {{16{!EXMEM_LoadUns & mem_out[31]}}, mem_out[31:16]};
+					'd3:
+						loaded_val <= mem_out;
+				endcase
+			else if (big_endian ^ invert_endian)
+				case (EXMEM_MemSize)
+					'd1:
+						loaded_val <= {{24{!EXMEM_LoadUns & mem_out[31]}}, mem_out[31:24]};
+					'd2:
+						loaded_val <= {{16{!EXMEM_LoadUns & mem_out[23]}}, mem_out[23:16], mem_out[31:24]};
+					'd3:
+						loaded_val <= {mem_out[7:0], mem_out[15:8], mem_out[23:16], mem_out[31:24]};
+				endcase
 
 	// Write back stage
 
 	wire WBinv = reset_internal || EXMEM_invalid || WBinvalid;
 	always @(negedge clk) begin
-		MEMWB_invalid <= WBinv;
-		MEMWB_ignore <= MEM_raise_excep || EXMEM_ignore || WBinv;
+		if (stage == 1 && mem_ready) begin
+			MEMWB_invalid <= WBinv;
+			MEMWB_ignore <= MEM_raise_excep || EXMEM_ignore || WBinv;
 
-		MEMWB_ALURES <= EXMEM_ALURES;
-		MEMWB_PC <= EXMEM_PC;
-		MEMWB_MSB <= EXMEM_MSB;
-		MEMWB_RD <= AtomicWriteReg && rd == EXMEM_RD ? 'd0 : EXMEM_RD;
-		MEMWB_WriteReg <= EXMEM_WriteReg;
-		MEMWB_MemToReg <= EXMEM_MemToReg;
-		MEMWB_PCtoReg <= EXMEM_PCtoReg;
-		MEMWB_SetLessThan <= EXMEM_SetLessThan;
+			MEMWB_ALURES <= EXMEM_ALURES;
+			MEMWB_PC <= EXMEM_PC;
+			MEMWB_MSB <= EXMEM_MSB;
+			MEMWB_RD <= AtomicWriteReg && rd == EXMEM_RD ? 'd0 : EXMEM_RD;
+			MEMWB_WriteReg <= EXMEM_WriteReg;
+			MEMWB_MemToReg <= EXMEM_MemToReg;
+			MEMWB_PCtoReg <= EXMEM_PCtoReg;
+			MEMWB_SetLessThan <= EXMEM_SetLessThan;
+			MEMWB_LOAD <= loaded_val;
+		end
 	end
 
 	always @(*) begin
@@ -692,6 +747,7 @@ module cpu(
 	hazard_Detection_Unit haz(
 		.clk(clk),
 		.reset(state_reset),
+		.go_to_next(stage && mem_ready),
 		.took_branch(take_branch),
 		.MEM_invalid(EXMEM_ignore),
 		.EX_invalid(IDEX_ignore),

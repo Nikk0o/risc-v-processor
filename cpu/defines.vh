@@ -29,4 +29,10 @@
 `define HALF 2
 `define WORD 3
 
+`define FETCH 0
+`define MISS 2
+`define HIT 1
+`define REPLACE 3
+`define WRITE_BACK 4
+
 `endif

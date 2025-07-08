@@ -14,44 +14,38 @@ module registers(input clk,
 				 output signed[31:0] r2);
 
 	reg signed[31:0] regs[31:0];
-	reg[31:0] invalid_r = 0;
-	wire wen = write_enable && |rd || atomic_write_enable && |atomic_rd;
+	reg[31:0] invalid_r;
+	wire awen = atomic_write_enable && |atomic_rd;
+	wire wen = write_enable && |rd && (rd != atomic_rd && awen || ~awen);
 
-	always @(posedge clk) begin
-		if (reset) begin
-			invalid_r <= {{31{1'b1}}, 1'b0};
-		end
-		else begin
-			if (wen)
-				if (atomic_write_enable && |atomic_rd) begin
-					if (write_enable && |rd) begin
-						if (rd == atomic_rd)
-							regs[atomic_rd] <= atomic_write_data;
-						else begin
-							regs[atomic_rd] <= atomic_write_data;
-							regs[rd] <= write_data;
+	always @(posedge clk)
+		case ({awen, wen})
+			2'b01: begin
+				regs[rd] <= write_data;
+				invalid_r[rd] <= 0;
+			end
+			2'b10: begin
+				regs[atomic_rd] <= atomic_write_data;
+				invalid_r[atomic_rd] <= 0;
+			end
+			2'b11: begin
+				regs[atomic_rd] <= atomic_write_data;
+				regs[rd] <= write_data;
 
-							invalid_r[rd] <= 0;
-						end
-					end
-					else
-						regs[atomic_rd] <= atomic_write_data;
+				invalid_r[atomic_rd] <= 0;
+				invalid_r[rd] <= 0;
+			end
+			default: begin
+			end
+		endcase
 
-					invalid_r[atomic_rd] <= 0;
-				end
-				else begin
-					regs[rd] <= write_data;
-					invalid_r[rd] <= 0;
-				end
-		end
-	end
-
-	assign r1 = rs1 == atomic_rd && |atomic_rd && atomic_write_enable ? atomic_write_data : rs1 == rd && |rd && write_enable ? write_data : invalid_r[rs1] ? 32'd0 : regs[rs1];
-	assign r2 = rs2 == atomic_rd && |atomic_rd && atomic_write_enable ? atomic_write_data : rs2 == rd && |rd && write_enable ? write_data : invalid_r[rs2] ? 32'd0 : regs[rs2];
+	assign r1 = invalid_r[rs1] ? 32'd0 : regs[rs1];
+	assign r2 = invalid_r[rs2] ? 32'd0 : regs[rs2];
 
 	integer i;
-	initial
-		for (i = 0; i < 32; i = i + 1)
-			regs[i] = 0;
+	initial begin
+		regs[0] = 0;
+		invalid_r = {{31{1'b1}}, 1'b0};
+	end
 
 endmodule
