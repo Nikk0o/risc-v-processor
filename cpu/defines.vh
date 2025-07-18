@@ -34,5 +34,11 @@
 `define HIT 1
 `define REPLACE 3
 `define WRITE_BACK 4
+`define OVERWRITE 5
+
+`define IDLE 0
+`define FORWARD_DATA 1
+`define FORWARD_CACHE 2
+`define FORWARD_RAM 3
 
 `endif

@@ -36,10 +36,14 @@ module uc(
 	output reg[3:0] ExcepCode,
 	output reg Ret,
 	output reg Jalr,
-	output reg[1:0] RetFrom
+	output reg[1:0] RetFrom,
+	output reg Wfi
 );
 
 	always @(*)
+		// Problem: This will not raise an illegal instruction exception if an
+		// instruction
+		// has opcode 1110011 and doesn't match any implemented instruction.
 		if (opcode == 'b1110011) begin
 			if (funct3 > 0) begin
 				ReadCsrIDe <= 1;
@@ -61,8 +65,16 @@ module uc(
 					CsrOp <= 1;
 				else if (funct3 == 'b011 || funct3 == 'b111)
 					CsrOp <= 2;
+				else if (funct3 == 'h0 && funct12 == 'b000100000101) begin
+					CsrOp <= 0;
+				end
 				else
 					CsrOp <= 3;
+
+				if (funct3 == 'h0 && funct12 == 'b000100000101)
+					Wfi <= 1'b1;
+				else
+					Wfi <= 1'b0;
 
 				Ret <= 1'b0;
 			end
@@ -73,6 +85,7 @@ module uc(
 				AtomicWriteReg <= 0;
 				WriteCsrIDe <= 1;
 				CsrOp <= 0;
+				Wfi <= 1'b0;
 
 				// Ecall
 				if (funct12 == 0) begin
@@ -143,6 +156,7 @@ module uc(
 			Ret <= 0;
 			CsrOp <= 0;
 			RetFrom <= 0;
+			Wfi <= 1'b0;
 
 			if (!(opcode == 'b0110011
 				|| opcode == 'b0010011

@@ -1,8 +1,9 @@
-INPUT(main.o)
+INPUT(main.o lcd.o trap.o)
 STARTUP(setup.o)
 OUTPUT(a.out)
 
-__end_stack = 1024;
+__end_stack = 2048;
+plic_1 = 2;
 
 SECTIONS
 {

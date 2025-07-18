@@ -7,13 +7,16 @@ module hazard_Detection_Unit(
 	input is_load_EX,
 	input is_load_MEM,
 	input is_store_EX,
+	input any_branch,
 	input csr_write_mstatus,
 	input csr_write,
 	input ret,
 	input took_branch,
 	input is_branch_EX,
+	input interrupt,
 	input[31:0] ID_PC,
 	input[31:0] EX_PC,
+	input[31:0] MEM_PC,
 	input any_excep,
 	input[4:0] rs1,
 	input[4:0] rs2,
@@ -45,20 +48,17 @@ module hazard_Detection_Unit(
 		MEM_rd <= reset ? 0 : go_to_next ? EX_rd : MEM_rd;
 	end
 
-	always @(posedge clk) begin
+	always @(*) begin
 		stop_IF = ~took_branch && (
-			is_branch_EX && csr_write
-			|| (is_load_EX || is_store_EX) && csr_write_mstatus
-			|| is_load_EX && (forward_EX_A || forward_EX_B));
+			(is_load_EX || is_store_EX) && csr_write_mstatus && !EX_invalid
+			|| is_load_EX && (forward_EX_A || forward_EX_B) && !EX_invalid)
+			|| is_load_MEM && (forward_MEM_A_L || forward_MEM_B_L) && !MEM_invalid;
 
 		stop_ID = ~took_branch && (
-			(is_load_EX || is_store_EX) && csr_write_mstatus
-			|| is_load_EX && (forward_EX_A || forward_EX_B));
+			(is_load_EX || is_store_EX) && csr_write_mstatus && !EX_invalid
+			|| is_load_EX && (forward_EX_A || forward_EX_B) && !EX_invalid)
+			|| is_load_MEM && (forward_MEM_A_L || forward_MEM_B_L) && !MEM_invalid;
 	end
-
-	reg keep_invalid_ex;
-	always @(negedge clk)
-		keep_invalid_ex <= stop_ID;
 
 	always @(*) begin
 		if (reset) begin
@@ -82,10 +82,10 @@ module hazard_Detection_Unit(
 
 			forward_EX_A = ~EX_invalid && rs1 == EX_rd && rs1_nz && EX_PC != ID_PC;
 			forward_EX_B = ~EX_invalid && rs2 == EX_rd && rs2_nz && EX_PC != ID_PC;
-			forward_MEM_A <= ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
-			forward_MEM_B <= ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
-			forward_MEM_A_L <= ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd));
-			forward_MEM_B_L <= ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd));
+			forward_MEM_A <= ~MEM_invalid && ~is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd)) && MEM_PC != ID_PC;
+			forward_MEM_B <= ~MEM_invalid && ~is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd)) && MEM_PC != ID_PC;
+			forward_MEM_A_L <= ~MEM_invalid && is_load_MEM && rs1_nz && (forward_EX_A ^ (rs1 == MEM_rd)) && MEM_PC != ID_PC;
+			forward_MEM_B_L <= ~MEM_invalid && is_load_MEM && rs2_nz && (forward_EX_B ^ (rs2 == MEM_rd)) && MEM_PC != ID_PC;
 
 			set_invalid_WB = 0;
 
@@ -101,8 +101,14 @@ module hazard_Detection_Unit(
 				set_invalid_EX <= 1;
 				set_invalid_MEM <= 1;
 			end
+			else if (interrupt) begin
+				set_invalid_IF <= 1;
+				set_invalid_ID <= 0;
+				set_invalid_EX <= 0;
+				set_invalid_MEM <= 0;
+			end
 			else if (stop_IF && ~stop_ID) begin
-				set_invalid_IF <= 0;
+				set_invalid_IF <= 1;
 				set_invalid_ID <= 1;
 				set_invalid_EX <= 0;
 				set_invalid_MEM <= 0;

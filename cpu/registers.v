@@ -19,23 +19,26 @@ module registers(input clk,
 	wire wen = write_enable && |rd && (rd != atomic_rd && awen || ~awen);
 
 	always @(posedge clk)
-		case ({awen, wen})
-			2'b01: begin
+		case ({awen, wen, reset})
+			3'b010: begin
 				regs[rd] <= write_data;
 				invalid_r[rd] <= 0;
 			end
-			2'b10: begin
+			3'b100: begin
 				regs[atomic_rd] <= atomic_write_data;
 				invalid_r[atomic_rd] <= 0;
 			end
-			2'b11: begin
+			3'b110: begin
 				regs[atomic_rd] <= atomic_write_data;
 				regs[rd] <= write_data;
 
 				invalid_r[atomic_rd] <= 0;
 				invalid_r[rd] <= 0;
 			end
+			3'b000: begin
+			end
 			default: begin
+				invalid_r <= 1;
 			end
 		endcase
 
